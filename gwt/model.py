@@ -71,16 +71,8 @@ share_variables = lambda func: tf.make_template(
 # H = size of each head
 
 @share_variables
-def general_attention(sbj, obj, n_head, head_size):
-    pass
-
-@share_variables
-def additive_attention(sbj, obj, n_head, head_size):
-    pass
-
-@share_variables
-def scaled_dot_product_attention(sbj, obj, n_head, head_size):
-
+def general(sbj, obj, n_head, head_size):
+    
     sbj_shape = get_shape(sbj, expected_rank=2) # (B, G)
     obj_shape = get_shape(obj, expected_rank=3) # (B, M, F)
 
@@ -91,23 +83,72 @@ def scaled_dot_product_attention(sbj, obj, n_head, head_size):
 
     obj_tensors = tf.reshape(obj, [-1, feat_units]) # (B*M, F)
 
+    query = tf.reshape(sbj, [batch_size, 1, 1, gws_units]) # (B, 1, 1, G)
+    query = tf.tile(query, [1, n_head, 1, 1]) # (B, N, 1, G)
+    key = tf.layers.dense(obj_tensors, n_head*gws_units, name='key') # (B*M, N*G)
+    key = tf.reshape(key, [batch_size, n_modality, n_head, gws_units]) # (B, M, N, G)
+    key = tf.transpose(key, [0, 2, 1, 3]) # (B, N, M, G)
+    scores = tf.matmul(query, key, transpose_b=True) # (B, N, 1, M)
+    dist = tf.nn.softmax(scores) # (B, N, 1, M)
+
+    return dist
+
+@share_variables
+def additive(sbj, obj, n_head, head_size):
+    pass
+
+@share_variables
+def scaled_dot_product(sbj, obj, n_head, head_size):
+
+    sbj_shape = get_shape(sbj, expected_rank=2) # (B, G)
+    obj_shape = get_shape(obj, expected_rank=3) # (B, M, F)
+
+    # gws_units = sbj_shape[1] # G
+    batch_size = obj_shape[0] # B
+    n_modality = obj_shape[1] # M
+    feat_units = obj_shape[2] # F
+
+    obj_tensors = tf.reshape(obj, [-1, feat_units]) # (B*M, F)
+
     query = tf.layers.dense(sbj, n_head*head_size, name='query') # (B, N*H)
     key = tf.layers.dense(obj_tensors, n_head*head_size, name='key') # (B*M, N*H)
-    val = tf.layers.dense(obj_tensors, n_head*head_size, name='value') # (B*M, N*H)
 
-    query = tf.reshape(query, [batch_size, 1, n_head, head_size])
+    query = tf.reshape(query, [batch_size, 1, n_head, head_size]) # (B, 1, N, H)
     query = tf.transpose(query, [0, 2, 1, 3]) # (B, N, 1, H)
-    key = tf.reshape(key, [batch_size, n_modality, n_head, head_size])
+    key = tf.reshape(key, [batch_size, n_modality, n_head, head_size]) # (B, M, N, H)
     key = tf.transpose(key, [0, 2, 1, 3]) # (B, N, M, H)
     scores = tf.matmul(query, key, transpose_b=True) # (B, N, 1, M)
     scores = tf.multiply(scores, 1./math.sqrt(float(head_size))) # (B, N, 1, M)
-    scores = tf.squeeze(scores) # (B, N, M)
-    dist = tf.nn.softmax(scores)
-    val = tf.reshape(val, [batch_size, n_modality, n_head, head_size])
-    val = tf.transpose(val, [0, 2, 1, 3]) # (B, N, M, H)
-    context = tf.matmul(dist, val)
-    context = tf.transpose(context, [0, 2, 1, 3]) # (B, M, N, H)
-    return context, dist
+    dist = tf.nn.softmax(scores) # (B, N, 1, M)
+
+    return dist
+
+@share_variables
+def attention(sbj, obj,
+              n_head=1,
+              head_size=128,
+              score_func=None):
+
+    sbj_shape = get_shape(sbj, expected_rank=2) # (B, G)
+    obj_shape = get_shape(obj, expected_rank=3) # (B, M, F)
+
+    gws_units = sbj_shape[1] # G
+    batch_size = obj_shape[0] # B
+    n_modality = obj_shape[1] # M
+    feat_units = obj_shape[2] # F
+    
+    with tf.variable_scope('attention'):
+        with tf.variable_scope(score_func.__name__):
+            dist = score_func(sbj, obj, n_head, head_size) # (B, N, 1, M)
+            dist_r3 = tf.squeeze(dist) # (B, N, M)
+        obj_tensors = tf.reshape(obj, [-1, feat_units]) # (B*M, F)
+        value = tf.layers.dense(obj_tensors, n_head*head_size, name='value') # (B*M, N*H)
+        value = tf.reshape(value, [batch_size, n_modality, n_head, head_size]) # (B, M, N, H)
+        value = tf.transpose(value, [0, 2, 1, 3]) # (B, N, M, H)
+        context = tf.matmul(dist, value) # (B, N, 1, H)
+        context = tf.reshape(context, [batch_size, n_head*head_size]) # (B, N*H)
+
+    return context, dist_r3
 
 def global_workspace(inputs, # (B, M, S, F)
                      gws_size=512, # G
@@ -131,9 +172,9 @@ def global_workspace(inputs, # (B, M, S, F)
     cell = tf.nn.rnn_cell.LSTMCell(gws_size)
 
     atten_dict = {
-        'general': general_attention,
-        'additive': additive_attention,
-        'scaled_dot_product': scaled_dot_product_attention
+        'general': general,
+        'additive': additive,
+        'scaled_dot_product': scaled_dot_product
     }
     if atten_type not in atten_dict:
         raise ValueError('Unknown attention type: %s' % atten_type)
@@ -142,17 +183,22 @@ def global_workspace(inputs, # (B, M, S, F)
         emit_output = cell_output
         if cell_output is None: # time == 0
             next_cell_state = cell.zero_state(batch_size, tf.float32)
-            next_input = inputs_ta.read(time) # (B, M, F)
-            next_input = tf.reduce_mean(next_input, axis=1) # (B, F)
-            next_input = tf.tile(next_input, [1, n_head]) # (B, N*F)
-            next_loop_state = atten_dist_ta.write(time, tf.fill([batch_size, n_head, n_modality], .5))
+            next_input, atten_dist = attention(
+                sbj=tf.zeros([batch_size, gws_size]),
+                obj=inputs_ta.read(time), # (B, M, F)
+                n_head=n_head, # N
+                head_size=head_size, # H
+                score_func=atten_dict[atten_type]
+            )
+            next_loop_state = atten_dist_ta.write(time, atten_dist)
         else: # time >= 1
             next_cell_state = cell_state
-            next_input, atten_dist = atten_dict[atten_type](
+            next_input, atten_dist = attention(
                 sbj=cell_output, # (B, G) ?
                 obj=inputs_ta.read(time), # (B, M, F)
                 n_head=n_head, # N
-                head_size=head_size # H
+                head_size=head_size, # H
+                score_func=atten_dict[atten_type]
             )
             next_loop_state = loop_state.write(time, atten_dist)
         finished = (time >= seq_length)
