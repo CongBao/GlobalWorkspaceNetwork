@@ -93,7 +93,7 @@ class GWTModel(object):
                     units=config.proj_size,
                     activ=config.proj_activ,
                     dropout=config.proj_dropout
-                )
+                ) # (B, G) -> (B, P)
 
     def get_projection(self):
         return self.proj_output
@@ -331,7 +331,8 @@ def global_workspace(inputs, gws_size, n_head, head_size, atten_type='general', 
                 obj=inputs_ta.read(time), # (B, M, F)
                 n_head=n_head, # N
                 head_size=head_size, # H
-                score_func=atten_dict[atten_type]
+                score_func=atten_dict[atten_type],
+                value_activ=value_activ
             )
             next_loop_state = loop_state.write(time, atten_dist)
         finished = (time >= seq_length)
