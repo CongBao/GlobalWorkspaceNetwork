@@ -10,7 +10,7 @@ import copy
 import json
 import math
 
-import tensorflow as tf 
+import tensorflow as tf
 
 
 
@@ -23,9 +23,9 @@ class GWTConfig(object):
                  gws_size=512,
                  n_head=4,
                  atten_type='general',
-                 map_activ=None,
-                 proj_activ=None,
-                 value_activ=None,
+                 map_activ='relu',
+                 proj_activ='relu',
+                 value_activ='relu',
                  map_dropout=0.1,
                  proj_dropout=0.1):
         self.map_size=map_size
@@ -121,6 +121,7 @@ share_variables = lambda func: tf.make_template(
 # G = global workspace size
 # N = number of heads
 # H = size of each head (hidden size)
+# P = projection size
 
 def mapping(input_list, units, activ=None, dropout=0.0):
 
@@ -130,10 +131,11 @@ def mapping(input_list, units, activ=None, dropout=0.0):
     for idx in range(n_modality):
         features = input_list[idx] # (B, S, F')
         feat_shape = get_shape(features, expected_rank=3)
-        feats = tf.keras.layers.Dropout(
+        feats = tf.nn.dropout(
+            x=features,
             rate=dropout,
             noise_shape=(feat_shape[0], 1, feat_shape[2])
-        )(features) # (B, S, F')
+        ) # (B, S, F')
         feats = tf.keras.layers.TimeDistributed(
             layer=tf.keras.layers.Dense(units, activation=activ),
             name='map_{}'.format(idx)
@@ -149,13 +151,11 @@ def projection(features, units, activ=None, dropout=0.0):
     
     assert_rank(features, 2) # (B, G)
 
-    proj = tf.keras.layers.Dropout(
-        rate=dropout
-    )(features)
+    proj = tf.nn.dropout(features, rate=dropout)
     proj = tf.keras.layers.Dense(
         units=units,
         activation=activ
-    )(proj)
+    )(proj) # (B, P)
 
     return proj
 
