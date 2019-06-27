@@ -32,9 +32,10 @@ class Flag(object):
         self.do_test = False
         self.test_batch_size = 4
         self.learning_rate = 0.001
-        self.save_summary_steps = 100
-        self.save_checkpoints_steps = 1000
+        self.save_summary_steps = 5
+        self.save_checkpoints_steps = 5
         self.keep_checkpoint_max = 5
+        self.log_step_count_steps = 1
 
 
 
@@ -128,12 +129,12 @@ def input_fn_builder(examples, seq_length, batch_size, is_training):
         n_example = len(examples)
         d = tf.data.Dataset.from_tensor_slices({
             'pose': tf.constant(
-                value=pose_examples,
+                value=np.asarray(pose_examples, dtype=np.float32),
                 shape=[n_example, seq_length, pose_feat_size],
                 dtype=tf.float32
             ),
             'emg': tf.constant(
-                value=emg_examples,
+                value=np.asarray(emg_examples, dtype=np.float32),
                 shape=[n_example, seq_length, emg_feat_size],
                 dtype=tf.float32
             ),
@@ -176,7 +177,7 @@ def create_model(inputs, labels, config, is_training, n_label):
         per_sample_loss = -tf.reduce_sum(one_hot_labels*log_prob, axis=-1)
         loss = tf.reduce_mean(per_sample_loss)
 
-    return loss, prob
+    return loss, per_sample_loss, prob
 
 def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=None):
 
@@ -187,7 +188,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
 
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
-        loss, prob = create_model(
+        loss, per_sample_loss, prob = create_model(
             inputs=[pose, emg],
             labels=label,
             config=config,
@@ -195,8 +196,8 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
             n_label=n_label
         )
 
+        tvars = tf.trainable_variables()
         if init_ckpt is not None:
-            tvars = tf.trainable_variables()
             name_to_var = collections.OrderedDict()
             for var in tvars:
                 name = var.name_to_var
@@ -216,7 +217,12 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
         output_spec = None
 
         if mode == tf.estimator.ModeKeys.TRAIN:
-            train_op = tf.train.RMSPropOptimizer(learning_rate)
+            tf.logging.info('***************************')
+            tf.logging.info('*** Trainable Variables ***')
+            tf.logging.info('***************************')
+            for var in tvars:
+                tf.logging.info('  name = {0}, shape= {1}'.format(var.name, var.shape))
+            train_op = tf.train.RMSPropOptimizer(learning_rate).minimize(loss, global_step=tf.train.get_global_step())
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
@@ -225,7 +231,8 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
         elif mode == tf.estimator.ModeKeys.EVAL:
             pred = tf.argmax(prob, axis=-1, output_type=tf.int32)
             acc = tf.metrics.accuracy(labels=label, predictions=pred)
-            eval_metric_ops = {'eval_acc': acc, 'eval_loss': loss}
+            los = tf.metrics.mean(values=per_sample_loss)
+            eval_metric_ops = {'eval_acc': acc, 'eval_loss': los}
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
@@ -294,7 +301,8 @@ def main(FLAG):
         model_dir=FLAG.output_dir,
         save_summary_steps=FLAG.save_summary_steps,
         save_checkpoints_steps=FLAG.save_checkpoints_steps,
-        keep_checkpoint_max=FLAG.keep_checkpoint_max
+        keep_checkpoint_max=FLAG.keep_checkpoint_max,
+        log_step_count_steps=FLAG.log_step_count_steps
     )
 
     estimator = tf.estimator.Estimator(

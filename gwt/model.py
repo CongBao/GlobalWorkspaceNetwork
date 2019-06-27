@@ -86,7 +86,7 @@ class GWTModel(object):
                     head_size=config.head_size,
                     atten_type=config.atten_type,
                     value_activ=config.value_activ
-                ) # (B, M, S, F) -> S_[(B, G)], S_[(B, N, M)]
+                ) # (B, M, S, F) -> (S, B, G), (S, B, N, M)
             with tf.variable_scope('projection'): # rnn last cell state -> fc
                 self.proj_output = projection(
                     features=self.outputs[-1],
@@ -106,11 +106,11 @@ class GWTModel(object):
 
 
 
-share_variables = lambda func: tf.make_template(
-    name_=func.__name__,
-    func_=func,
-    create_scope_now_=True
-)
+# share_variables = lambda func: tf.make_template(
+#     name_=func.__name__,
+#     func_=func,
+#     create_scope_now_=True
+# )
 
 # scalar dimensions reference
 # B = batch size
@@ -159,7 +159,7 @@ def projection(features, units, activ=None, dropout=0.0):
 
     return proj
 
-@share_variables
+#@share_variables
 def general(sbj, obj, n_head, head_size):
     """ General (multiplicative) attention. (Luong 2015)
     """
@@ -188,7 +188,7 @@ def general(sbj, obj, n_head, head_size):
 
     return dist
 
-@share_variables
+#@share_variables
 def additive(sbj, obj, n_head, head_size):
     """ Additive attention. (Bahdanau 2015)
     """
@@ -224,7 +224,7 @@ def additive(sbj, obj, n_head, head_size):
 
     return dist
 
-@share_variables
+#@share_variables
 def scaled_dot_product(sbj, obj, n_head, head_size):
     """ Scaled dot product attention. (Vaswani 2017)
     """
@@ -258,7 +258,7 @@ def scaled_dot_product(sbj, obj, n_head, head_size):
 
     return dist
 
-@share_variables
+#@share_variables
 def attention(sbj, obj, n_head, head_size, score_func, value_activ=None):
 
     sbj_shape = get_shape(sbj, expected_rank=2) # (B, G)
@@ -335,12 +335,12 @@ def global_workspace(inputs, gws_size, n_head, head_size, atten_type='general', 
                 value_activ=value_activ
             )
             next_loop_state = loop_state.write(time, atten_dist)
-        finished = (time >= seq_length)
+        finished = (time >= seq_length-1)
         return finished, next_input, next_cell_state, emit_output, next_loop_state
 
     outputs_ta, _, loop_state_ta = tf.nn.raw_rnn(cell, loop_fn)
-    outputs = tf.unstack(outputs_ta.stack()) # (S, B, G) -> S_[(B, G)]
-    dists = tf.unstack(loop_state_ta.stack()) # (S, B, N, M) -> S_[(B, N, M)]
+    outputs = outputs_ta.stack() # (S, B, G)
+    dists = loop_state_ta.stack() # (S, B, N, M)
 
     return outputs, dists
 
