@@ -62,14 +62,14 @@ class GWTConfig(object):
 
 
 class GWTModel(object):
-  
+
     def __init__(self, inputs, config, is_training):
 
         config = copy.deepcopy(config)
         if not is_training:
             config.map_dropout = 0.0
             config.proj_dropout = 0.0
-    
+
         with tf.variable_scope('gwt_model'):
             with tf.variable_scope('mapping'): # input -> dense (sequence)
                 self.mapped_inputs = mapping(
@@ -192,7 +192,7 @@ def general(sbj, obj, n_head, head_size):
 def additive(sbj, obj, n_head, head_size):
     """ Additive attention. (Bahdanau 2015)
     """
-    
+
     sbj_shape = get_shape(sbj, expected_rank=2) # (B, G)
     obj_shape = get_shape(obj, expected_rank=3) # (B, M, F)
 
@@ -268,7 +268,7 @@ def attention(sbj, obj, n_head, head_size, score_func, value_activ=None):
     batch_size = obj_shape[0] # B
     n_modality = obj_shape[1] # M
     feat_units = obj_shape[2] # F
-    
+
     with tf.variable_scope('attention'):
         with tf.variable_scope(score_func.__name__):
             dist = score_func(sbj, obj, n_head, head_size) # (B, N, 1, M)
