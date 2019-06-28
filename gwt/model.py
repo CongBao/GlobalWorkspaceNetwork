@@ -89,7 +89,7 @@ class GWTModel(object):
                     atten_type=config.atten_type,
                     self_atten=config.self_atten,
                     value_activ=config.value_activ
-                ) # (B, M, S, F) -> (S, B, G), (S, B, N, M)
+                ) # (B, M, S, F) -> (S, B, G), (S, B, N, [1,M,1+M], M)
             with tf.variable_scope('projection'): # rnn last cell state -> fc
                 self.proj_output = projection(
                     features=self.outputs[-1],
@@ -331,55 +331,61 @@ def global_workspace(inputs, gws_size, n_head, head_size, atten_type='general', 
     inputs_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, M, F)
     inputs_ta = inputs_ta.unstack(inputs)
 
-    atten_dist_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, N, M)
+    atten_dist_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, N, [1,M,1+M], M)
 
     cell = tf.nn.rnn_cell.LSTMCell(gws_size)
 
     def loop_fn(time, cell_output, cell_state, loop_state):
+        finished = (time >= seq_length)
         emit_output = cell_output
-        if cell_output is None:
+        if cell_output is None: # time == 0
             next_cell_state = cell.zero_state(batch_size, tf.float32)
-            gws_atten_sbj = tf.zeros([batch_size, 1, gws_size])
-            loop_state_ta = atten_dist_ta
-        else:
-            next_cell_state = cell_state
-            gws_atten_sbj = cell_output[:, None, :]
-            loop_state_ta = loop_state
+            if self_atten == 0:
+                next_input = tf.zeros([batch_size, n_head*head_size]) # (B, N*H)
+                next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, 1, n_modality])) # (B, N, 1, M)
+            if self_atten == 1:
+                next_input = tf.zeros([batch_size, n_modality*n_head*head_size]) # (B, M*N*H)
+                next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, n_modality, n_modality])) # (B, N, M, M)
+            if self_atten == 2:
+                next_input = tf.zeros([batch_size, (1+n_modality)*n_head-head_size]) # (B, (1+M)*N*H)
+                next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, 1+n_modality, n_modality])) # (B, N, (1+M), M)
+            return finished, next_input, next_cell_state, emit_output, next_loop_state
+        next_cell_state = cell_state
         if self_atten == 0 or self_atten == 2: # gws attention or both
             gws_atten_res, gws_atten_dist = attention(
-                sbj=gws_atten_sbj, # (B, 1, G)
-                obj=inputs_ta.read(time), # (B, M, F)
+                sbj=cell_output[:, None, :], # (B, 1, G)
+                obj=inputs_ta.read(time-1), # (B, M, F)
                 n_head=n_head, # N
                 head_size=head_size, # H
                 atten_type=atten_type,
                 value_activ=value_activ
             ) # (B, 1, N*H), (B, N, 1, M)
         if self_atten == 1 or self_atten == 2: # self attention or both
+            inputs_tensor = inputs_ta.read(time-1)
             self_atten_res, self_atten_dist = attention(
-                sbj=inputs_ta.read(time), # (B, M, F)
-                obj=inputs_ta.read(time), # (B, M, F)
+                sbj=inputs_tensor, # (B, M, F)
+                obj=inputs_tensor, # (B, M, F)
                 n_head=n_head, # N
                 head_size=head_size, # H
                 atten_type=atten_type,
                 value_activ=value_activ
             ) # (B, M, N*H), (B, N, M, M)
         if self_atten == 0: # gws attention
-            next_input = tf.squeeze(gws_atten_res) # (B, N*H)
-            next_loop_state = loop_state_ta.write(time, gws_atten_dist)
+            next_input = tf.reshape(gws_atten_res, [batch_size, n_head*head_size]) # (B, N*H)
+            next_loop_state = loop_state.write(time-1, gws_atten_dist)
         if self_atten == 1: # self attention
-            next_input = tf.reshape(self_atten_res, [batch_size, -1]) # (B, M*N*H)
-            next_loop_state = loop_state_ta.write(time, self_atten_dist)
+            next_input = tf.reshape(self_atten_res, [batch_size, n_modality*n_head*head_size]) # (B, M*N*H)
+            next_loop_state = loop_state.write(time-1, self_atten_dist)
         if self_atten == 2: # both
             next_input = tf.concat([gws_atten_res, self_atten_res], 1) # (B, 1+M, N*H)
-            next_input = tf.reshape(next_input, [batch_size, -1]) # (B, (1+M)*N*H)
+            next_input = tf.reshape(next_input, [batch_size, (1+n_modality)*n_head-head_size]) # (B, (1+M)*N*H)
             atten_dist = tf.concat([gws_atten_dist, self_atten_dist], 2) # (B, N, (1+M), M)
-            next_loop_state = loop_state_ta.write(time, atten_dist)
-        finished = (time >= seq_length-1)
+            next_loop_state = loop_state.write(time-1, atten_dist)
         return finished, next_input, next_cell_state, emit_output, next_loop_state
 
     outputs_ta, _, loop_state_ta = tf.nn.raw_rnn(cell, loop_fn)
     outputs = outputs_ta.stack() # (S, B, G)
-    dists = loop_state_ta.stack() # (S, B, N, M)
+    dists = loop_state_ta.stack() # (S, B, N, [1,M,1+M], M)
 
     return outputs, dists
 
