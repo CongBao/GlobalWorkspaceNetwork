@@ -30,7 +30,7 @@ class Flag(object):
         self.do_valid = True
         self.do_test = False
         self.learning_rate = 1e-3
-        self.n_train_epoch = 100
+        self.n_train_epoch = 25
         self.train_batch_size = 32
         self.valid_batch_size = 4
         self.test_batch_size = 4

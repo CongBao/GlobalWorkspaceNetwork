@@ -17,28 +17,30 @@ import tensorflow as tf
 class GWTConfig(object):
 
     def __init__(self,
-                 map_size=128,
-                 proj_size=512,
-                 head_size=128,
-                 gws_size=512,
-                 n_head=4,
+                 map_size=32, # 128
+                 proj_size=64, # 512
+                 head_size=32, # 128
+                 gws_size=64, # 512
+                 n_head=2, # 4
+                 self_atten=0,
                  atten_type='general',
-                 map_activ='relu',
+                 map_activ=None,
                  proj_activ='relu',
-                 value_activ='relu',
+                 value_activ=None,
                  map_dropout=0.1,
                  proj_dropout=0.1):
-        self.map_size=map_size
-        self.proj_size=proj_size
-        self.head_size=head_size
-        self.gws_size=gws_size
-        self.n_head=n_head
-        self.atten_type=atten_type
-        self.map_activ=map_activ
-        self.proj_activ=proj_activ
-        self.value_activ=value_activ
-        self.map_dropout=map_dropout
-        self.proj_dropout=proj_dropout
+        self.map_size = map_size
+        self.proj_size = proj_size
+        self.head_size = head_size
+        self.gws_size = gws_size
+        self.n_head = n_head
+        self.self_atten = self_atten
+        self.atten_type = atten_type
+        self.map_activ = map_activ
+        self.proj_activ = proj_activ
+        self.value_activ = value_activ
+        self.map_dropout = map_dropout
+        self.proj_dropout = proj_dropout
 
     @classmethod
     def from_dict(cls, json_obj):
@@ -77,7 +79,7 @@ class GWTModel(object):
                     units=config.map_size,
                     activ=config.map_activ,
                     dropout=config.map_dropout
-                ) # M_[(B, S, F')] -> (B, M, S, F)
+                ) # M, (B, S, F') -> (B, M, S, F)
             with tf.variable_scope('gws'): # dense output -> rnn cell (loop)
                 self.outputs, self.dists = global_workspace(
                     inputs=self.mapped_inputs,
@@ -85,6 +87,7 @@ class GWTModel(object):
                     n_head=config.n_head,
                     head_size=config.head_size,
                     atten_type=config.atten_type,
+                    self_atten=config.self_atten,
                     value_activ=config.value_activ
                 ) # (B, M, S, F) -> (S, B, G), (S, B, N, M)
             with tf.variable_scope('projection'): # rnn last cell state -> fc
@@ -115,7 +118,46 @@ class ConcModel(object):
             config.proj_dropout = 0.0
         
         with tf.variable_scope('conc_model'):
-            inputs = tf.concat(inputs, axis=-1) # M_[(B, S, F')] -> (B, S, F*)
+            self.outputs, _ = tf.nn.dynamic_rnn(
+                cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
+                inputs=tf.concat(inputs, axis=-1), # M, (B, S, F') -> (B, S, F*)
+                dtype=tf.float32
+            )
+            with tf.variable_scope('projection'):
+                self.proj_output = projection(
+                    features=self.outputs[:,-1,:],
+                    units=config.proj_size,
+                    activ=config.proj_activ,
+                    dropout=config.proj_dropout
+                ) # (B, G) -> (B, P)
+
+    def get_projection(self):
+        return self.proj_output
+
+    def get_gws_sequence(self):
+        return self.outputs
+
+
+
+class MapConcModel(object):
+
+    def __init__(self, inputs, config, is_training):
+
+        config = copy.deepcopy(config)
+        if not is_training:
+            config.map_dropout = 0.0
+            config.proj_dropout = 0.0
+        
+        with tf.variable_scope('map_conc_model'):
+            with tf.variable_scope('mapping'): # input -> dense (sequence)
+                self.mapped_inputs = mapping(
+                    input_list=inputs,
+                    units=config.map_size,
+                    activ=config.map_activ,
+                    dropout=config.map_dropout
+                ) # M, (B, S, F') -> (B, M, S, F)
+            input_list = tf.unstack(self.mapped_inputs, axis=1) # (B, M, S, F) -> M, (B, S, F)
+            inputs = tf.concat(inputs, axis=-1) # M, (B, S, F) -> (B, S, 2*F)
             self.outputs, _ = tf.nn.dynamic_rnn(
                 cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
                 inputs=inputs,
@@ -138,15 +180,21 @@ class ConcModel(object):
 
 
 # scalar dimensions reference
-# B = batch size
-# M = number of modalities
-# S = sequence length
-# F'= feature units before mapping 
-# F = feature units after mapping
-# G = global workspace size
-# N = number of heads
-# H = size of each head (hidden size)
-# P = projection size
+#  B = batch size
+#  M = number of modalities
+#  S = sequence length
+#  F'= feature size before mapping 
+#  F = feature size after mapping
+#  G = global workspace size
+#  N = number of heads
+#  H = size of each head (hidden size)
+#  P = projection size
+
+# scalar dimensions for general attention
+# SF = subject tensor feature size
+# OF = object tensor feature size
+# SL = subject tensor sequence length
+# OL = object tensor sequence length
 
 def mapping(input_list, units, activ=None, dropout=0.0):
 
@@ -186,54 +234,63 @@ def projection(features, units, activ=None, dropout=0.0):
 
 def attention(sbj, obj, n_head, head_size, atten_type, value_activ=None):
 
-    sbj_shape = get_shape(sbj, expected_rank=2) # (B, G)
-    obj_shape = get_shape(obj, expected_rank=3) # (B, M, F)
+    sbj_shape = get_shape(sbj, expected_rank=3) # (B, M, SF) : (B, 1, G) or (B, M, F)
+    obj_shape = get_shape(obj, expected_rank=3) # (B, M, OF) : (B, M, F)
 
-    gws_units = sbj_shape[1] # G
-    batch_size = obj_shape[0] # B
-    n_modality = obj_shape[1] # M
-    feat_units = obj_shape[2] # F
+    batch_size = sbj_shape[0] # B
+    sbj_length = sbj_shape[1] # SL : 1 or M
+    obj_length = obj_shape[1] # OL : M
+    sbj_feats = sbj_shape[2] # SF : G or F
+    obj_feats = obj_shape[2] # OF : F
 
     def general(sbj, obj, n_head, head_size):
         """ General (multiplicative) attention. (Luong 2015) """
-        obj_tensors = tf.reshape(obj, [-1, feat_units]) # (B*M, F)
-        key = tf.keras.layers.Dense(n_head*gws_units, name='key')(obj_tensors) # (B*M, N*H)
-        key = tf.reshape(key, [batch_size, n_modality, n_head, gws_units]) # (B, M, N, G)
-        key = tf.transpose(key, [0, 2, 1, 3]) # (B, N, M, G)
-        query = tf.reshape(sbj, [batch_size, 1, 1, gws_units]) # (B, 1, 1, G)
-        query = tf.tile(query, [1, n_head, 1, 1]) # (B, N, 1, G)
-        scores = tf.matmul(query, key, transpose_b=True) # (B, N, 1, M)
-        dist = tf.nn.softmax(scores) # (B, N, 1, M)
+        sbj_tensors = tf.reshape(sbj, [-1, sbj_feats]) # (B*SL, SF)
+        obj_tensors = tf.reshape(obj, [-1, obj_feats]) # (B*OL, OF)
+        key = tf.keras.layers.Dense(n_head*sbj_feats, name='key')(obj_tensors) # (B*OL, N*SF)
+        key = tf.reshape(key, [batch_size, obj_length, n_head, sbj_feats]) # (B, OL, N, SF)
+        key = tf.transpose(key, [0, 2, 1, 3]) # (B, N, OL, SF)
+        query = tf.reshape(sbj_tensors, [batch_size, 1, sbj_length, sbj_feats]) # (B, 1, SL, SF)
+        query = tf.tile(query, [1, n_head, 1, 1]) # (B, N, SL, SF)
+        scores = tf.matmul(query, key, transpose_b=True) # (B, N, SL, OL)
+        dist = tf.nn.softmax(scores) # (B, N, SL, OL)
         return dist
 
     def additive(sbj, obj, n_head, head_size):
         """ Additive attention. (Bahdanau 2015) """
-        obj_tensors = tf.reshape(obj, [-1, feat_units]) # (B*M, F)
-        query = tf.keras.layers.Dense(n_head*head_size, name='query')(sbj) # (B, N*H)
-        query = tf.reshape(query, [batch_size, 1, n_head, head_size]) # (B, 1, N, H)
-        key = tf.keras.layers.Dense(n_head*head_size, name='key')(obj_tensors) # (B*M, N*H)
-        key = tf.reshape(key, [batch_size, n_modality, n_head, head_size]) # (B, M, N, H)
-        add = tf.add(query, key) # (B, M, N, H)
-        add = tf.nn.tanh(add) # (B, M, N, H)
-        add = tf.reshape(add, [-1, head_size]) # (B*M*N, H)
-        scores = tf.layers.dense(add, 1, name='score')
-        scores = tf.reshape(scores, [batch_size, n_modality, 1, n_head]) # (B, M, 1, N)
-        scores = tf.transpose(scores, [0, 3, 2, 1]) # (B, N, 1, M)
-        dist = tf.nn.softmax(scores) # (B, N, 1, M)
+        sbj_tensors = tf.reshape(sbj, [-1, sbj_feats]) # (B*SL, SF)
+        obj_tensors = tf.reshape(obj, [-1, obj_feats]) # (B*OL, OF)
+        query = tf.keras.layers.Dense(n_head*head_size, name='query')(sbj_tensors) # (B*SL, N*H)
+        query = tf.reshape(query, [batch_size, sbj_length, n_head, head_size]) # (B, SL, N, H)
+        query = tf.transpose(query, [0, 2, 1, 3]) # (B, N, SL, H)
+        query = tf.expand_dims(query, 3) # (B, N, SL, 1, H)
+        query = tf.tile(query, [1, 1, 1, obj_length, 1]) # (B, N, SL, OL, H)
+        key = tf.keras.layers.Dense(n_head*head_size, name='key')(obj_tensors) # (B*OL, N*H)
+        key = tf.reshape(key, [batch_size, obj_length, n_head, head_size]) # (B, OL, N, H)
+        key = tf.transpose(key, [0, 2, 1, 3]) # (B, N, OL, H)
+        key = tf.expand_dims(key, 2) # (B, N, 1, OL, H)
+        key = tf.tile(key, [1, 1, sbj_length, 1, 1]) # (B, N, SL, OL, H)
+        add = tf.add(query, key) # (B, N, SL, OL, H)
+        add = tf.nn.tanh(add) # (B, N, SL, OL, H)
+        add = tf.reshape(add, [-1, head_size]) # (B*N*SL*OL, H)
+        scores = tf.keras.layers.Dense(1, name='score')(add) # (B*N*SL*OL, 1)
+        scores = tf.reshape(scores, [batch_size, n_head, sbj_length, obj_length]) # (B, N, SL, OL)
+        dist = tf.nn.softmax(scores) # (B, N, SL, OL)
         return dist
 
     def scaled_dot_product(sbj, obj, n_head, head_size):
         """ Scaled dot product attention. (Vaswani 2017) """
-        obj_tensors = tf.reshape(obj, [-1, feat_units]) # (B*M, F)
-        query = tf.keras.layers.Dense(n_head*head_size, name='query')(sbj) # (B, N*H)
-        query = tf.reshape(query, [batch_size, 1, n_head, head_size]) # (B, 1, N, H)
-        query = tf.transpose(query, [0, 2, 1, 3]) # (B, N, 1, H)
-        key = tf.keras.layers.Dense(n_head*head_size, name='key')(obj_tensors) # (B*M, N*H)
-        key = tf.reshape(key, [batch_size, n_modality, n_head, head_size]) # (B, M, N, H)
-        key = tf.transpose(key, [0, 2, 1, 3]) # (B, N, M, H)
-        scores = tf.matmul(query, key, transpose_b=True) # (B, N, 1, M)
-        scores = tf.multiply(scores, 1./math.sqrt(float(head_size))) # (B, N, 1, M)
-        dist = tf.nn.softmax(scores) # (B, N, 1, M)
+        sbj_tensors = tf.reshape(sbj, [-1, sbj_feats]) # (B*SL, SF)
+        obj_tensors = tf.reshape(obj, [-1, obj_feats]) # (B*OL, OF)
+        query = tf.keras.layers.Dense(n_head*head_size, name='query')(sbj_tensors) # (B*SL, N*H)
+        query = tf.reshape(query, [batch_size, sbj_length, n_head, head_size]) # (B, SL, N, H)
+        query = tf.transpose(query, [0, 2, 1, 3]) # (B, N, SL, H)
+        key = tf.keras.layers.Dense(n_head*head_size, name='key')(obj_tensors) # (B*OL, N*H)
+        key = tf.reshape(key, [batch_size, obj_length, n_head, head_size]) # (B, OL, N, H)
+        key = tf.transpose(key, [0, 2, 1, 3]) # (B, N, OL, H)
+        scores = tf.matmul(query, key, transpose_b=True) # (B, N, SL, OL)
+        scores = tf.multiply(scores, 1./math.sqrt(float(head_size))) # (B, N, SL, OL)
+        dist = tf.nn.softmax(scores) # (B, N, SL, OL)
         return dist
 
     atten_dict = {
@@ -246,22 +303,22 @@ def attention(sbj, obj, n_head, head_size, atten_type, value_activ=None):
 
     with tf.variable_scope('attention'):
         with tf.variable_scope(atten_dict[atten_type].__name__):
-            dist = atten_dict[atten_type](sbj, obj, n_head, head_size) # (B, N, 1, M)
-            dist_r3 = tf.squeeze(dist) # (B, N, M)
-        obj_tensors = tf.reshape(obj, [-1, feat_units]) # (B*M, F)
+            dist = atten_dict[atten_type](sbj, obj, n_head, head_size) # (B, N, SL, OL)
+        obj_tensors = tf.reshape(obj, [-1, obj_feats]) # (B*OL, OF)
         value = tf.keras.layers.Dense(
             units=n_head*head_size,
             activation=value_activ,
             name='value'
-        )(obj_tensors) # (B*M, N*H)
-        value = tf.reshape(value, [batch_size, n_modality, n_head, head_size]) # (B, M, N, H)
-        value = tf.transpose(value, [0, 2, 1, 3]) # (B, N, M, H)
-        context = tf.matmul(dist, value) # (B, N, 1, H)
-        context = tf.reshape(context, [batch_size, n_head*head_size]) # (B, N*H)
+        )(obj_tensors) # (B*OL, N*H)
+        value = tf.reshape(value, [batch_size, obj_length, n_head, head_size]) # (B, OL, N, H)
+        value = tf.transpose(value, [0, 2, 1, 3]) # (B, N, OL, H)
+        context = tf.matmul(dist, value) # (B, N, SL, H)
+        context = tf.transpose(context, [0, 2, 1, 3]) # (B, SL, N, H)
+        context = tf.reshape(context, [batch_size, sbj_length, n_head*head_size]) # (B, SL, N*H)
 
-    return context, dist_r3
+    return context, dist
 
-def global_workspace(inputs, gws_size, n_head, head_size, atten_type='general', value_activ=None):
+def global_workspace(inputs, gws_size, n_head, head_size, atten_type='general', self_atten=0, value_activ=None):
 
     input_shape = get_shape(inputs, expected_rank=4) # (B, M, S, F)
 
@@ -280,28 +337,43 @@ def global_workspace(inputs, gws_size, n_head, head_size, atten_type='general', 
 
     def loop_fn(time, cell_output, cell_state, loop_state):
         emit_output = cell_output
-        if cell_output is None: # time == 0
+        if cell_output is None:
             next_cell_state = cell.zero_state(batch_size, tf.float32)
-            next_input, atten_dist = attention(
-                sbj=tf.zeros([batch_size, gws_size]),
-                obj=inputs_ta.read(time), # (B, M, F)
-                n_head=n_head, # N
-                head_size=head_size, # H
-                atten_type=atten_type,
-                value_activ=value_activ
-            )
-            next_loop_state = atten_dist_ta.write(time, atten_dist)
-        else: # time >= 1
+            gws_atten_sbj = tf.zeros([batch_size, 1, gws_size])
+            loop_state_ta = atten_dist_ta
+        else:
             next_cell_state = cell_state
-            next_input, atten_dist = attention(
-                sbj=cell_output, # (B, G) ?
+            gws_atten_sbj = cell_output[:, None, :]
+            loop_state_ta = loop_state
+        if self_atten == 0 or self_atten == 2: # gws attention or both
+            gws_atten_res, gws_atten_dist = attention(
+                sbj=gws_atten_sbj, # (B, 1, G)
                 obj=inputs_ta.read(time), # (B, M, F)
                 n_head=n_head, # N
                 head_size=head_size, # H
                 atten_type=atten_type,
                 value_activ=value_activ
-            )
-            next_loop_state = loop_state.write(time, atten_dist)
+            ) # (B, 1, N*H), (B, N, 1, M)
+        if self_atten == 1 or self_atten == 2: # self attention or both
+            self_atten_res, self_atten_dist = attention(
+                sbj=inputs_ta.read(time), # (B, M, F)
+                obj=inputs_ta.read(time), # (B, M, F)
+                n_head=n_head, # N
+                head_size=head_size, # H
+                atten_type=atten_type,
+                value_activ=value_activ
+            ) # (B, M, N*H), (B, N, M, M)
+        if self_atten == 0: # gws attention
+            next_input = tf.squeeze(gws_atten_res) # (B, N*H)
+            next_loop_state = loop_state_ta.write(time, gws_atten_dist)
+        if self_atten == 1: # self attention
+            next_input = tf.reshape(self_atten_res, [batch_size, -1]) # (B, M*N*H)
+            next_loop_state = loop_state_ta.write(time, self_atten_dist)
+        if self_atten == 2: # both
+            next_input = tf.concat([gws_atten_res, self_atten_res], 1) # (B, 1+M, N*H)
+            next_input = tf.reshape(next_input, [batch_size, -1]) # (B, (1+M)*N*H)
+            atten_dist = tf.concat([gws_atten_dist, self_atten_dist], 2) # (B, N, (1+M), M)
+            next_loop_state = loop_state_ta.write(time, atten_dist)
         finished = (time >= seq_length-1)
         return finished, next_input, next_cell_state, emit_output, next_loop_state
 
