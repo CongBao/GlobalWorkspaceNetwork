@@ -21,7 +21,8 @@ import model
 class Flag(object):
 
     def __init__(self):
-        self.data_dir = 'data/'
+        self.data_path = None
+        self.ckpt_path = None
         self.output_dir = 'output/'
         self.config_file = None
         self.do_train = True
@@ -76,8 +77,8 @@ class EmoPainProcessor(object):
             diff = self.max_length - pose_shape[0]
             pose_patch = np.zeros((diff, pose_shape[1]))
             emg_patch = np.zeros((diff, emg_shape[1]))
-            example.pose = np.concatenate([example.pose, pose_patch])
-            example.emg = np.concatenate([example.emg, emg_patch])
+            example.pose = np.concatenate([pose_patch, example.pose]) # pad zero at front
+            example.emg = np.concatenate([emg_patch, example.emg])
             self.examples.insert(0, example)
         random.seed(13)
         random.shuffle(self.examples)
@@ -88,14 +89,12 @@ class EmoPainProcessor(object):
     def label_class(num):
         if num == 0.0:
             return 0
-        elif num <=5.0:
-            return 1
         else:
-            return 2
+            return 1
 
     @staticmethod
     def get_n_label():
-        return 3
+        return 2
 
     def get_max_seq_length(self):
         return self.max_length
@@ -259,7 +258,7 @@ def main(FLAG):
 
     tf.gfile.MakeDirs(FLAG.output_dir)
 
-    epp = EmoPainProcessor(FLAG.data_dir)
+    epp = EmoPainProcessor(FLAG.data_path)
 
     n_train_step = None
     if FLAG.do_train:
@@ -294,7 +293,8 @@ def main(FLAG):
         config=config,
         n_label=epp.get_n_label(),
         learning_rate=FLAG.learning_rate,
-        n_train_step=n_train_step
+        n_train_step=n_train_step,
+        init_ckpt=FLAG.ckpt_path
     )
 
     run_config = tf.estimator.RunConfig(
