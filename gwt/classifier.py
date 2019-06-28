@@ -21,19 +21,19 @@ import model
 class Flag(object):
 
     def __init__(self):
-        self.config_file = None
-        self.output_dir = 'output/'
         self.data_dir = 'data/'
+        self.output_dir = 'output/'
+        self.config_file = None
         self.do_train = True
-        self.train_batch_size = 32
-        self.n_train_epoch = 10
         self.do_valid = True
-        self.valid_batch_size = 4
         self.do_test = False
+        self.learning_rate = 1e-3
+        self.n_train_epoch = 100
+        self.train_batch_size = 32
+        self.valid_batch_size = 4
         self.test_batch_size = 4
-        self.learning_rate = 0.001
-        self.save_summary_steps = 5
-        self.save_checkpoints_steps = 5
+        self.save_summary_steps = 10
+        self.save_checkpoints_steps = 10
         self.keep_checkpoint_max = 5
         self.log_step_count_steps = 1
 

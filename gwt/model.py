@@ -108,8 +108,32 @@ class GWTModel(object):
 
 class ConcModel(object):
 
-    def __init__(self):
-        pass
+    def __init__(self, inputs, config, is_training):
+
+        config = copy.deepcopy(config)
+        if not is_training:
+            config.proj_dropout = 0.0
+        
+        with tf.variable_scope('conc_model'):
+            inputs = tf.concat(inputs, axis=-1) # M_[(B, S, F')] -> (B, S, F*)
+            self.outputs, _ = tf.nn.dynamic_rnn(
+                cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
+                inputs=inputs,
+                dtype=tf.float32
+            )
+            with tf.variable_scope('projection'):
+                self.proj_output = projection(
+                    features=self.outputs[:,-1,:],
+                    units=config.proj_size,
+                    activ=config.proj_activ,
+                    dropout=config.proj_dropout
+                ) # (B, G) -> (B, P)
+
+    def get_projection(self):
+        return self.proj_output
+
+    def get_gws_sequence(self):
+        return self.outputs
 
 
 
