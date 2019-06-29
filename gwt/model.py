@@ -234,8 +234,8 @@ def projection(features, units, activ=None, dropout=0.0):
 
 def attention(sbj, obj, n_head, head_size, atten_type, value_activ=None):
 
-    sbj_shape = get_shape(sbj, expected_rank=3) # (B, M, SF) : (B, 1, G) or (B, M, F)
-    obj_shape = get_shape(obj, expected_rank=3) # (B, M, OF) : (B, M, F)
+    sbj_shape = get_shape(sbj, expected_rank=3) # (B, SL, SF) : (B, 1, G) or (B, M, F)
+    obj_shape = get_shape(obj, expected_rank=3) # (B, OL, OF) : (B, M, F)
 
     batch_size = sbj_shape[0] # B
     sbj_length = sbj_shape[1] # SL : 1 or M
