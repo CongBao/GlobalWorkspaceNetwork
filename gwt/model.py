@@ -89,10 +89,10 @@ class GWTModel(object):
                     atten_type=config.atten_type,
                     drop_rate=config.drop_rate,
                     self_atten=config.self_atten
-                ) # (B, M, S, H) -> (S, B, G), (S, B, N, [1,M,1+M], M)
+                ) # (B, M, S, H) -> (B, S, G), (B, S, N, [1, M], M)
             with tf.variable_scope('projection'): # rnn last cell state -> fc
                 self.proj_output = projection(
-                    features=self.outputs[-1],
+                    features=self.outputs[:, -1, :],
                     units=config.proj_size,
                     activ=get_activ_fn(config.proj_activ),
                     dropout=config.drop_rate
@@ -341,8 +341,6 @@ def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_acti
     inputs_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, M, H)
     inputs_ta = inputs_ta.unstack(inputs)
 
-    atten_dist_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, N, [1, M], M)
-
     cell = tf.nn.rnn_cell.LSTMCell(gws_size)
 
     def loop_fn(time, cell_output, cell_state, loop_state):
@@ -351,10 +349,7 @@ def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_acti
         if cell_output is None: # time == 0
             next_cell_state = cell.zero_state(batch_size, tf.float32)
             next_input = tf.zeros([batch_size, n_modality*head_size]) # (B, M*H)
-            if self_atten:
-                next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, n_modality, n_modality])) # (B, N, M, M)
-            else:
-                next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, 1, n_modality])) # (B, N, 1, M)
+            next_loop_state = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, N, [1, M], M)
             return finished, next_input, next_cell_state, emit_output, next_loop_state
         next_cell_state = cell_state
         obj_tensors = inputs_ta.read(time-1)
@@ -378,7 +373,9 @@ def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_acti
 
     outputs_ta, _, loop_state_ta = tf.nn.raw_rnn(cell, loop_fn)
     outputs = outputs_ta.stack() # (S, B, G)
+    outputs = tf.transpose(outputs, [1, 0, 2]) # (B, S, G)
     dists = loop_state_ta.stack() # (S, B, N, [1, M], M)
+    dists = tf.transpose(dists, [1, 0, 2, 3, 4])
 
     return outputs, dists
 

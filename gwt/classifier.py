@@ -31,8 +31,8 @@ class Flag(object):
         self.learning_rate = 1e-3
         self.n_train_epoch = 25
         self.train_batch_size = 32
-        self.valid_batch_size = 4
-        self.test_batch_size = 4
+        self.valid_batch_size = 8
+        self.test_batch_size = 8
         self.save_summary_steps = 10
         self.save_checkpoints_steps = 10
         self.keep_checkpoint_max = 5
@@ -163,20 +163,20 @@ def create_model(inputs, labels, config, is_training, n_label):
     )
 
     output = gwt_model.get_projection() # (B, P)
+    dists = gwt_model.get_dist_sequence() # (S, B, N, [1,M,1+M], M)
 
     with tf.variable_scope('loss'):
         if is_training:
             output = tf.nn.dropout(output, rate=0.1)
         logits = tf.keras.layers.Dense(n_label)(output) # (B, L)
-        prob = tf.nn.softmax(logits, axis=-1) # (B, L)
         log_prob = tf.nn.log_softmax(logits, axis=-1) # (B, L)
 
-        one_hot_labels = tf.one_hot(labels, depth=n_label, dtype=tf.float32)
+        one_hot_labels = tf.one_hot(labels, depth=n_label, dtype=tf.float32) # (B, L)
 
-        per_sample_loss = -tf.reduce_sum(one_hot_labels*log_prob, axis=-1)
+        per_sample_loss = -tf.reduce_sum(one_hot_labels*log_prob, axis=-1) # (B,)
         loss = tf.reduce_mean(per_sample_loss)
 
-    return loss, per_sample_loss, prob
+    return loss, per_sample_loss, log_prob, dists
 
 def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=None):
 
@@ -187,7 +187,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
 
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
-        loss, per_sample_loss, prob = create_model(
+        loss, per_sample_loss, log_prob, dists = create_model(
             inputs=[pose, emg],
             labels=label,
             config=config,
@@ -199,7 +199,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
         if init_ckpt is not None:
             name_to_var = collections.OrderedDict()
             for var in tvars:
-                name = var.name_to_var
+                name = var.name
                 m = re.match("^(.*):\\d+$", name)
                 if m is not None:
                     name = m.group(1)
@@ -228,7 +228,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
                 train_op=train_op
             )
         elif mode == tf.estimator.ModeKeys.EVAL:
-            pred = tf.argmax(prob, axis=-1, output_type=tf.int32)
+            pred = tf.argmax(log_prob, axis=-1, output_type=tf.int32)
             acc = tf.metrics.accuracy(labels=label, predictions=pred)
             los = tf.metrics.mean(values=per_sample_loss)
             eval_metric_ops = {'eval_acc': acc, 'eval_loss': los}
@@ -238,9 +238,10 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
                 eval_metric_ops=eval_metric_ops
             )
         else:
+            pred = tf.argmax(log_prob, axis=-1, output_type=tf.int32)
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
-                predictions={'prob': prob}
+                predictions={'pred': pred, 'dists': dists}
             )
         
         return output_spec
@@ -347,21 +348,22 @@ def main(FLAG):
                 writer.write('{0} = {1}\n'.format(key, str(result[key])))
 
     if FLAG.do_test:
-        tf.logging.info('******************************')
+        tf.logging.info('***************************')
         tf.logging.info('***** Running Testing *****')
-        tf.logging.info('******************************')
+        tf.logging.info('***************************')
         tf.logging.info('  Num examples = {}'.format(len(test_examples)))
         tf.logging.info('  Batch size = {}'.format(FLAG.test_batch_size))
         result = estimator.predict(input_fn=test_input_fn)
-        output_predict_file = os.path.join(FLAG.output_dir, 'test_results.jsonl')
-        with tf.gfile.GFile(output_predict_file, 'w') as writer:
+        output_test_file = os.path.join(FLAG.output_dir, 'test_results.json')
+        with tf.gfile.GFile(output_test_file, 'w') as writer:
             tf.logging.info('***** Test Results *****')
-            for i, prediction in enumerate(result):
-                prob = prediction['prob']
-                ans_id = np.argmax(prob)
-                ans = {'id': 'question{}'.format(i+1), 'answerKey': ans_id}
-                output_line = json.dumps(ans)+'\n'
-                writer.write(output_line)
+            output = {}
+            for i, pred in enumerate(result):
+                uid = test_examples[i].uid
+                res = pred['pred']
+                tf.logging.info('id: {0}\tPrediction: {1}'.format(uid, res))
+                output[uid] = {'pred': int(res), 'dist': pred['dists'].tolist()}
+            writer.write(json.dumps(output))
 
 if __name__ == "__main__":
     main(Flag())
