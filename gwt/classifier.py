@@ -15,7 +15,6 @@ import numpy as np
 import tensorflow as tf
 
 import model
-import optimizer
 
 
 
@@ -222,7 +221,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
             tf.logging.info('***************************')
             for var in tvars:
                 tf.logging.info('  name = {0}, shape= {1}'.format(var.name, var.shape))
-            train_op = optimizer.create_optimizer(loss, learning_rate, n_train_step)
+            train_op = tf.train.AdamOptimizer(learning_rate).minimize(loss, global_step=tf.train.get_global_step())
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,

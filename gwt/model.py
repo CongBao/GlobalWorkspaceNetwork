@@ -10,6 +10,7 @@ import copy
 import json
 import math
 
+import numpy as np
 import tensorflow as tf
 
 
@@ -17,30 +18,28 @@ import tensorflow as tf
 class GWTConfig(object):
 
     def __init__(self,
-                 map_size=32, # 128
-                 proj_size=64, # 512
-                 head_size=32, # 128
-                 gws_size=64, # 512
-                 n_head=2, # 4
-                 self_atten=0,
+                 gws_size=64, # M*H
+                 proj_size=64, # M*H
+                 inter_size=128, # 4*H
+                 hidden_size=32, # H
+                 n_head=2, # N
+                 self_atten=True,
                  atten_type='general',
                  map_activ=None,
-                 proj_activ='relu',
-                 value_activ=None,
-                 map_dropout=0.1,
-                 proj_dropout=0.1):
-        self.map_size = map_size
-        self.proj_size = proj_size
-        self.head_size = head_size
+                 proj_activ='tanh',
+                 inter_activ='gelu',
+                 drop_rate=0.1):
         self.gws_size = gws_size
+        self.proj_size = proj_size
+        self.inter_size = inter_size
+        self.hidden_size = hidden_size
         self.n_head = n_head
         self.self_atten = self_atten
         self.atten_type = atten_type
         self.map_activ = map_activ
         self.proj_activ = proj_activ
-        self.value_activ = value_activ
-        self.map_dropout = map_dropout
-        self.proj_dropout = proj_dropout
+        self.inter_activ = inter_activ
+        self.drop_rate = drop_rate
 
     @classmethod
     def from_dict(cls, json_obj):
@@ -69,33 +68,34 @@ class GWTModel(object):
 
         config = copy.deepcopy(config)
         if not is_training:
-            config.map_dropout = 0.0
-            config.proj_dropout = 0.0
+            config.drop_rate = 0.0
 
         with tf.variable_scope('gwt_model'):
             with tf.variable_scope('mapping'): # input -> dense (sequence)
                 self.mapped_inputs = mapping(
                     input_list=inputs,
-                    units=config.map_size,
-                    activ=config.map_activ,
-                    dropout=config.map_dropout
-                ) # M, (B, S, F') -> (B, M, S, F)
+                    units=config.hidden_size,
+                    activ=get_activ_fn(config.map_activ),
+                    dropout=config.drop_rate
+                ) # M, (B, S, F) -> (B, M, S, H)
             with tf.variable_scope('gws'): # dense output -> rnn cell (loop)
                 self.outputs, self.dists = global_workspace(
                     inputs=self.mapped_inputs,
                     gws_size=config.gws_size,
                     n_head=config.n_head,
-                    head_size=config.head_size,
+                    head_size=config.hidden_size,
+                    inter_size=config.inter_size,
+                    inter_activ=get_activ_fn(config.inter_activ),
                     atten_type=config.atten_type,
-                    self_atten=config.self_atten,
-                    value_activ=config.value_activ
-                ) # (B, M, S, F) -> (S, B, G), (S, B, N, [1,M,1+M], M)
+                    drop_rate=config.drop_rate,
+                    self_atten=config.self_atten
+                ) # (B, M, S, H) -> (S, B, G), (S, B, N, [1,M,1+M], M)
             with tf.variable_scope('projection'): # rnn last cell state -> fc
                 self.proj_output = projection(
                     features=self.outputs[-1],
                     units=config.proj_size,
-                    activ=config.proj_activ,
-                    dropout=config.proj_dropout
+                    activ=get_activ_fn(config.proj_activ),
+                    dropout=config.drop_rate
                 ) # (B, G) -> (B, P)
 
     def get_projection(self):
@@ -115,20 +115,20 @@ class ConcModel(object):
 
         config = copy.deepcopy(config)
         if not is_training:
-            config.proj_dropout = 0.0
+            config.drop_rate = 0.0
         
         with tf.variable_scope('conc_model'):
             self.outputs, _ = tf.nn.dynamic_rnn(
                 cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
-                inputs=tf.concat(inputs, axis=-1), # M, (B, S, F') -> (B, S, F*)
+                inputs=tf.concat(inputs, axis=-1), # M, (B, S, F) -> (B, S, F*)
                 dtype=tf.float32
             )
             with tf.variable_scope('projection'):
                 self.proj_output = projection(
                     features=self.outputs[:,-1,:],
                     units=config.proj_size,
-                    activ=config.proj_activ,
-                    dropout=config.proj_dropout
+                    activ=get_activ_fn(config.proj_activ),
+                    dropout=config.drop_rate
                 ) # (B, G) -> (B, P)
 
     def get_projection(self):
@@ -145,19 +145,18 @@ class MapConcModel(object):
 
         config = copy.deepcopy(config)
         if not is_training:
-            config.map_dropout = 0.0
-            config.proj_dropout = 0.0
+            config.drop_rate = 0.0
         
         with tf.variable_scope('map_conc_model'):
             with tf.variable_scope('mapping'): # input -> dense (sequence)
                 self.mapped_inputs = mapping(
                     input_list=inputs,
-                    units=config.map_size,
-                    activ=config.map_activ,
-                    dropout=config.map_dropout
-                ) # M, (B, S, F') -> (B, M, S, F)
-            input_list = tf.unstack(self.mapped_inputs, axis=1) # (B, M, S, F) -> M, (B, S, F)
-            inputs = tf.concat(inputs, axis=-1) # M, (B, S, F) -> (B, S, 2*F)
+                    units=config.hidden_size,
+                    activ=get_activ_fn(config.map_activ),
+                    dropout=config.drop_rate
+                ) # M, (B, S, F) -> (B, M, S, H)
+            input_list = tf.unstack(self.mapped_inputs, axis=1) # (B, M, S, H) -> M, (B, S, H)
+            inputs = tf.concat(inputs, axis=-1) # M, (B, S, H) -> (B, S, M*H)
             self.outputs, _ = tf.nn.dynamic_rnn(
                 cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
                 inputs=inputs,
@@ -167,8 +166,8 @@ class MapConcModel(object):
                 self.proj_output = projection(
                     features=self.outputs[:,-1,:],
                     units=config.proj_size,
-                    activ=config.proj_activ,
-                    dropout=config.proj_dropout
+                    activ=get_activ_fn(config.proj_activ),
+                    dropout=config.drop_rate
                 ) # (B, G) -> (B, P)
 
     def get_projection(self):
@@ -183,11 +182,11 @@ class MapConcModel(object):
 #  B = batch size
 #  M = number of modalities
 #  S = sequence length
-#  F'= feature size before mapping 
-#  F = feature size after mapping
+#  F = feature size before mapping
 #  G = global workspace size
 #  N = number of heads
-#  H = size of each head (hidden size)
+#  H = hidden size (size of each head)
+#  I = intermediate size
 #  P = projection size
 
 # scalar dimensions for general attention
@@ -202,21 +201,21 @@ def mapping(input_list, units, activ=None, dropout=0.0):
 
     mapped = []
     for idx in range(n_modality):
-        features = input_list[idx] # (B, S, F')
+        features = input_list[idx] # (B, S, F)
         feat_shape = get_shape(features, expected_rank=3)
         feats = tf.nn.dropout(
             x=features,
             rate=dropout,
             noise_shape=(feat_shape[0], 1, feat_shape[2])
-        ) # (B, S, F')
+        ) # (B, S, F)
         feats = tf.keras.layers.TimeDistributed(
             layer=tf.keras.layers.Dense(units, activation=activ),
             name='map_{}'.format(idx)
-        )(feats) # (B, S, F)
+        )(feats) # (B, S, H)
         mapped.append(feats)
 
-    inputs = tf.stack(mapped) # (M, B, S, F)
-    inputs = tf.transpose(inputs, [1, 0, 2, 3]) # (B, M, S, F)
+    inputs = tf.stack(mapped) # (M, B, S, H)
+    inputs = tf.transpose(inputs, [1, 0, 2, 3]) # (B, M, S, H)
     
     return inputs
 
@@ -232,16 +231,16 @@ def projection(features, units, activ=None, dropout=0.0):
 
     return proj
 
-def attention(sbj, obj, n_head, head_size, atten_type, value_activ=None):
+def attention(sbj, obj, n_head, head_size, inter_size, inter_activ, atten_type, drop_rate):
 
-    sbj_shape = get_shape(sbj, expected_rank=3) # (B, SL, SF) : (B, 1, G) or (B, M, F)
-    obj_shape = get_shape(obj, expected_rank=3) # (B, OL, OF) : (B, M, F)
+    sbj_shape = get_shape(sbj, expected_rank=3) # (B, SL, SF) : (B, 1, G) or (B, M, H)
+    obj_shape = get_shape(obj, expected_rank=3) # (B, OL, OF) : (B, M, H)
 
     batch_size = sbj_shape[0] # B
     sbj_length = sbj_shape[1] # SL : 1 or M
     obj_length = obj_shape[1] # OL : M
-    sbj_feats = sbj_shape[2] # SF : G or F
-    obj_feats = obj_shape[2] # OF : F
+    sbj_feats = sbj_shape[2] # SF : G or H
+    obj_feats = obj_shape[2] # OF : H
 
     def general(sbj, obj, n_head, head_size):
         """ General (multiplicative) attention. (Luong 2015) """
@@ -302,36 +301,47 @@ def attention(sbj, obj, n_head, head_size, atten_type, value_activ=None):
         raise ValueError('Unknown attention type: %s' % atten_type)
 
     with tf.variable_scope('attention'):
+        obj_tensors = tf.reshape(obj, [-1, obj_feats]) # (B*OL, OF)
         with tf.variable_scope(atten_dict[atten_type].__name__):
             dist = atten_dict[atten_type](sbj, obj, n_head, head_size) # (B, N, SL, OL)
-        obj_tensors = tf.reshape(obj, [-1, obj_feats]) # (B*OL, OF)
-        value = tf.keras.layers.Dense(
-            units=n_head*head_size,
-            activation=value_activ,
-            name='value'
-        )(obj_tensors) # (B*OL, N*H)
-        value = tf.reshape(value, [batch_size, obj_length, n_head, head_size]) # (B, OL, N, H)
-        value = tf.transpose(value, [0, 2, 1, 3]) # (B, N, OL, H)
-        context = tf.matmul(dist, value) # (B, N, SL, H)
-        context = tf.transpose(context, [0, 2, 1, 3]) # (B, SL, N, H)
-        context = tf.reshape(context, [batch_size, sbj_length, n_head*head_size]) # (B, SL, N*H)
+            value = tf.keras.layers.Dense(n_head*head_size, name='value')(obj_tensors) # (B*OL, N*H)
+            value = tf.reshape(value, [batch_size, obj_length, n_head, head_size]) # (B, OL, N, H)
+            value = tf.transpose(value, [0, 2, 1, 3]) # (B, N, OL, H)
+            context = tf.matmul(dist, value) # (B, N, SL, H)
+            context = tf.transpose(context, [0, 2, 1, 3]) # (B, SL, N, H)
+            context = tf.reshape(context, [batch_size*sbj_length, n_head*head_size]) # (B*SL, N*H)
+        with tf.variable_scope('atten_output'):
+            atten_output = tf.keras.layers.Dense(head_size)(context) # (B*SL, H)
+            if sbj_length != obj_length and sbj_length == 1:
+                atten_output = tf.reshape(atten_output, [batch_size, sbj_length, head_size]) # (B, SL, H)
+                atten_output = tf.tile(atten_output, [1, obj_length, 1]) # (B, OL, H)
+                atten_output = tf.reshape(atten_output, [batch_size*obj_length, head_size]) # (B*OL, H)
+            atten_output = tf.nn.dropout(atten_output, rate=drop_rate) # (B*OL, H)
+            atten_output = tf.contrib.layers.layer_norm(obj_tensors + atten_output, begin_norm_axis=-1) # (B*OL, H)
+        with tf.variable_scope('intermediate'):
+            inter_output = tf.keras.layers.Dense(inter_size, inter_activ)(atten_output) # (B*OL, I)
+        with tf.variable_scope('layer_output'):
+            layer_output = tf.keras.layers.Dense(head_size)(inter_output) # (B*OL, H)
+            layer_output = tf.nn.dropout(layer_output, rate=drop_rate) # (B*OL, H)
+            layer_output = tf.contrib.layers.layer_norm(layer_output + atten_output, begin_norm_axis=-1) # (B*OL, H)
+        output = tf.reshape(layer_output, [batch_size, obj_length, head_size]) # (B, OL, H)
 
-    return context, dist
+    return output, dist
 
-def global_workspace(inputs, gws_size, n_head, head_size, atten_type='general', self_atten=0, value_activ=None):
+def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_activ, atten_type, drop_rate, self_atten):
 
-    input_shape = get_shape(inputs, expected_rank=4) # (B, M, S, F)
+    input_shape = get_shape(inputs, expected_rank=4) # (B, M, S, H)
 
     batch_size = input_shape[0] # B
     n_modality = input_shape[1] # M
     seq_length = input_shape[2] # S
-    feat_units = input_shape[3] # F
+    feat_units = input_shape[3] # H
 
-    inputs = tf.transpose(inputs, [2, 0, 1, 3]) # (S, B, M, F)
-    inputs_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, M, F)
+    inputs = tf.transpose(inputs, [2, 0, 1, 3]) # (S, B, M, H)
+    inputs_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, M, H)
     inputs_ta = inputs_ta.unstack(inputs)
 
-    atten_dist_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, N, [1,M,1+M], M)
+    atten_dist_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, N, [1, M], M)
 
     cell = tf.nn.rnn_cell.LSTMCell(gws_size)
 
@@ -340,54 +350,48 @@ def global_workspace(inputs, gws_size, n_head, head_size, atten_type='general', 
         emit_output = cell_output
         if cell_output is None: # time == 0
             next_cell_state = cell.zero_state(batch_size, tf.float32)
-            if self_atten == 0:
-                next_input = tf.zeros([batch_size, n_head*head_size]) # (B, N*H)
-                next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, 1, n_modality])) # (B, N, 1, M)
-            if self_atten == 1:
-                next_input = tf.zeros([batch_size, n_modality*n_head*head_size]) # (B, M*N*H)
+            next_input = tf.zeros([batch_size, n_modality*head_size]) # (B, M*H)
+            if self_atten:
                 next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, n_modality, n_modality])) # (B, N, M, M)
-            if self_atten == 2:
-                next_input = tf.zeros([batch_size, (1+n_modality)*n_head-head_size]) # (B, (1+M)*N*H)
-                next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, 1+n_modality, n_modality])) # (B, N, (1+M), M)
+            else:
+                next_loop_state = atten_dist_ta.write(time, tf.zeros([batch_size, n_head, 1, n_modality])) # (B, N, 1, M)
             return finished, next_input, next_cell_state, emit_output, next_loop_state
         next_cell_state = cell_state
-        if self_atten == 0 or self_atten == 2: # gws attention or both
-            gws_atten_res, gws_atten_dist = attention(
-                sbj=cell_output[:, None, :], # (B, 1, G)
-                obj=inputs_ta.read(time-1), # (B, M, F)
-                n_head=n_head, # N
-                head_size=head_size, # H
-                atten_type=atten_type,
-                value_activ=value_activ
-            ) # (B, 1, N*H), (B, N, 1, M)
-        if self_atten == 1 or self_atten == 2: # self attention or both
-            inputs_tensor = inputs_ta.read(time-1)
-            self_atten_res, self_atten_dist = attention(
-                sbj=inputs_tensor, # (B, M, F)
-                obj=inputs_tensor, # (B, M, F)
-                n_head=n_head, # N
-                head_size=head_size, # H
-                atten_type=atten_type,
-                value_activ=value_activ
-            ) # (B, M, N*H), (B, N, M, M)
-        if self_atten == 0: # gws attention
-            next_input = tf.reshape(gws_atten_res, [batch_size, n_head*head_size]) # (B, N*H)
-            next_loop_state = loop_state.write(time-1, gws_atten_dist)
-        if self_atten == 1: # self attention
-            next_input = tf.reshape(self_atten_res, [batch_size, n_modality*n_head*head_size]) # (B, M*N*H)
-            next_loop_state = loop_state.write(time-1, self_atten_dist)
-        if self_atten == 2: # both
-            next_input = tf.concat([gws_atten_res, self_atten_res], 1) # (B, 1+M, N*H)
-            next_input = tf.reshape(next_input, [batch_size, (1+n_modality)*n_head-head_size]) # (B, (1+M)*N*H)
-            atten_dist = tf.concat([gws_atten_dist, self_atten_dist], 2) # (B, N, (1+M), M)
-            next_loop_state = loop_state.write(time-1, atten_dist)
+        obj_tensors = inputs_ta.read(time-1)
+        if self_atten:
+            sbj_tensors = obj_tensors # (B, M, H)
+        else:
+            sbj_tensors = cell_output[:, None, :] # (B, 1, G)
+        atten_res, atten_dist = attention(
+            sbj=sbj_tensors,
+            obj=obj_tensors,
+            n_head=n_head, # N
+            head_size=head_size, # H
+            inter_size=inter_size,
+            inter_activ=inter_activ,
+            atten_type=atten_type,
+            drop_rate=drop_rate
+        ) # (B, M, H), (B, N, [1, M], M)
+        next_input = tf.reshape(atten_res, [batch_size, n_modality*head_size]) # (B, M*H)
+        next_loop_state = loop_state.write(time-1, atten_dist)
         return finished, next_input, next_cell_state, emit_output, next_loop_state
 
     outputs_ta, _, loop_state_ta = tf.nn.raw_rnn(cell, loop_fn)
     outputs = outputs_ta.stack() # (S, B, G)
-    dists = loop_state_ta.stack() # (S, B, N, [1,M,1+M], M)
+    dists = loop_state_ta.stack() # (S, B, N, [1, M], M)
 
     return outputs, dists
+
+def get_activ_fn(activ_str):
+    if not isinstance(activ_str, six.string_types):
+        return activ_str
+    if not activ_str:
+        return None
+    activ = activ_str.lower()
+    if activ == 'gelu':
+        return lambda x: 0.5*x*(1.0+tf.tanh(np.sqrt(2/np.pi)*(x+0.044715*tf.pow(x, 3))))
+    else:
+        return tf.keras.layers.Activation(activ)
 
 def get_shape(tensor, expected_rank=None, name=None):
     if name is None:
