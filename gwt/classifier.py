@@ -11,6 +11,7 @@ import json
 import random
 import collections
 
+import emoji
 import numpy as np
 import tensorflow as tf
 
@@ -35,7 +36,7 @@ class Flag(object):
         self.test_batch_size = 8
         self.save_summary_steps = 10
         self.save_checkpoints_steps = 10
-        self.keep_checkpoint_max = 5
+        self.keep_checkpoint_max = None
         self.log_step_count_steps = 1
 
 
@@ -195,23 +196,8 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
             n_label=n_label
         )
 
-        tvars = tf.trainable_variables()
         if init_ckpt is not None:
-            name_to_var = collections.OrderedDict()
-            for var in tvars:
-                name = var.name
-                m = re.match("^(.*):\\d+$", name)
-                if m is not None:
-                    name = m.group(1)
-                name_to_var[name] = var
-            init_vars = tf.train.list_variables(init_ckpt)
-            assign_map = collections.OrderedDict()
-            for x in init_vars:
-                name, var = x[0], x[1]
-                if name not in name_to_var:
-                    continue
-                assign_map[name] = name
-            tf.train.init_from_checkpoint(init_ckpt, assign_map)
+            tf.train.init_from_checkpoint(init_ckpt, {'gwt_model/': 'gwt_model/'})
 
         output_spec = None
 
@@ -219,7 +205,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
             tf.logging.info('***************************')
             tf.logging.info('*** Trainable Variables ***')
             tf.logging.info('***************************')
-            for var in tvars:
+            for var in tf.trainable_variables():
                 tf.logging.info('  name = {0}, shape= {1}'.format(var.name, var.shape))
             train_op = tf.train.AdamOptimizer(learning_rate).minimize(loss, global_step=tf.train.get_global_step())
             output_spec = tf.estimator.EstimatorSpec(
@@ -339,7 +325,7 @@ def main(FLAG):
         tf.logging.info('******************************')
         tf.logging.info('  Num examples = {}'.format(len(valid_examples)))
         tf.logging.info('  Batch size = {}'.format(FLAG.valid_batch_size))
-        result = estimator.evaluate(input_fn=valid_input_fn)
+        result = estimator.evaluate(input_fn=valid_input_fn, checkpoint_path=FLAG.ckpt_path)
         output_valid_file = os.path.join(FLAG.output_dir, 'valid_results.txt')
         with tf.gfile.GFile(output_valid_file, 'w') as writer:
             tf.logging.info('***** Validation Results *****')
@@ -353,16 +339,18 @@ def main(FLAG):
         tf.logging.info('***************************')
         tf.logging.info('  Num examples = {}'.format(len(test_examples)))
         tf.logging.info('  Batch size = {}'.format(FLAG.test_batch_size))
-        result = estimator.predict(input_fn=test_input_fn)
+        result = estimator.predict(input_fn=test_input_fn, checkpoint_path=FLAG.ckpt_path)
         output_test_file = os.path.join(FLAG.output_dir, 'test_results.json')
         with tf.gfile.GFile(output_test_file, 'w') as writer:
             tf.logging.info('***** Test Results *****')
             output = {}
             for i, pred in enumerate(result):
                 uid = test_examples[i].uid
-                res = pred['pred']
-                tf.logging.info('id: {0}\tPrediction: {1}'.format(uid, res))
-                output[uid] = {'pred': int(res), 'dist': pred['dists'].tolist()}
+                lab = int(test_examples[i].label)
+                res = int(pred['pred'])
+                emo = emoji.emojize(':heavy_check_mark:' if lab == res else ':heavy_multiplication_x:')
+                tf.logging.info('  ID: {0}\tLabel: {1}\tPrediction: {2}\t{3}'.format(uid, lab, res, emo))
+                output[uid] = {'label': lab, 'pred': res, 'dist': pred['dists'].tolist()}
             writer.write(json.dumps(output))
 
 if __name__ == "__main__":
