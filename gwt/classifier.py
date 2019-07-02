@@ -34,8 +34,8 @@ class Flag(object):
         self.train_batch_size = 32
         self.valid_batch_size = 8
         self.test_batch_size = 8
-        self.save_summary_steps = 10
-        self.save_checkpoints_steps = 10
+        self.save_summary_steps = 5
+        self.save_checkpoints_steps = 5
         self.keep_checkpoint_max = None
         self.log_step_count_steps = 1
 
@@ -229,7 +229,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
                 mode=mode,
                 predictions={'pred': pred, 'dists': dists}
             )
-        
+
         return output_spec
 
     return model_fn
