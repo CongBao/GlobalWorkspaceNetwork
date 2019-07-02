@@ -116,7 +116,7 @@ class ConcModel(object):
         config = copy.deepcopy(config)
         if not is_training:
             config.drop_rate = 0.0
-        
+
         with tf.variable_scope('conc_model'):
             self.outputs, _ = tf.nn.dynamic_rnn(
                 cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
@@ -146,7 +146,7 @@ class MapConcModel(object):
         config = copy.deepcopy(config)
         if not is_training:
             config.drop_rate = 0.0
-        
+
         with tf.variable_scope('map_conc_model'):
             with tf.variable_scope('mapping'): # input -> dense (sequence)
                 self.mapped_inputs = mapping(
@@ -156,7 +156,7 @@ class MapConcModel(object):
                     dropout=config.drop_rate
                 ) # M, (B, S, F) -> (B, M, S, H)
             input_list = tf.unstack(self.mapped_inputs, axis=1) # (B, M, S, H) -> M, (B, S, H)
-            inputs = tf.concat(inputs, axis=-1) # M, (B, S, H) -> (B, S, M*H)
+            inputs = tf.concat(input_list, axis=-1) # M, (B, S, H) -> (B, S, M*H)
             self.outputs, _ = tf.nn.dynamic_rnn(
                 cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
                 inputs=inputs,
@@ -375,7 +375,7 @@ def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_acti
     outputs = outputs_ta.stack() # (S, B, G)
     outputs = tf.transpose(outputs, [1, 0, 2]) # (B, S, G)
     dists = loop_state_ta.stack() # (S, B, N, [1, M], M)
-    dists = tf.transpose(dists, [1, 0, 2, 3, 4])
+    dists = tf.transpose(dists, [1, 0, 2, 3, 4]) # (B, S, N, [1, M], M)
 
     return outputs, dists
 

@@ -164,7 +164,7 @@ def create_model(inputs, labels, config, is_training, n_label):
     )
 
     output = gwt_model.get_projection() # (B, P)
-    dists = gwt_model.get_dist_sequence() # (S, B, N, [1,M,1+M], M)
+    dists = gwt_model.get_dist_sequence() # (S, B, N, [1, M], M)
 
     with tf.variable_scope('loss'):
         if is_training:
@@ -348,9 +348,10 @@ def main(FLAG):
                 uid = test_examples[i].uid
                 lab = int(test_examples[i].label)
                 res = int(pred['pred'])
+                dis = pred['dists'].tolist()
                 emo = emoji.emojize(':heavy_check_mark:' if lab == res else ':heavy_multiplication_x:')
                 tf.logging.info('  ID: {0}\tLabel: {1}\tPrediction: {2}\t{3}'.format(uid, lab, res, emo))
-                output[uid] = {'label': lab, 'pred': res, 'dist': pred['dists'].tolist()}
+                output[uid] = {'label': lab, 'pred': res, 'dist': dis}
             writer.write(json.dumps(output))
 
 if __name__ == "__main__":
