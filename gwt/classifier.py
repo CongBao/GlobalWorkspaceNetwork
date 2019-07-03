@@ -57,15 +57,16 @@ class EmoPainProcessor(object):
     def __init__(self, data_dir, out_id=0):
         data = json.load(open(data_dir, 'r'))
         self.out_id = out_id
-        self.pid_list = []
         self.example_dict = {}
         self.max_length = 0
-        for pid, motion_dict in data.items():
-            self.pid_list.append(pid)
+        pid_set = set()
+        for pdid, motion_dict in data.items():
+            pid = pdid.split('_')[0]
+            pid_set.add(pid)
             examples = []
             for mid, content in motion_dict.items():
                 examples.append(EmoPainExample(
-                    uid='{0}_{1}'.format(pid, mid),
+                    uid='{0}_{1}'.format(pdid, mid),
                     pose=np.asarray(content['pose'], dtype=np.float32),
                     emg=np.asarray(content['emg'], dtype=np.float32),
                     label=self.label_class(content['pain'])
@@ -75,7 +76,11 @@ class EmoPainProcessor(object):
                 assert pose_len == emg_len
                 if pose_len >= self.max_length:
                     self.max_length = pose_len
-            self.example_dict[pid] = examples
+            if pid not in self.example_dict.keys():
+                self.example_dict[pid] = examples
+            else:
+                self.example_dict[pid].extend(examples)
+        self.pid_list = list(pid_set)
         self.pid_list.sort()
         assert self.out_id in range(len(self.pid_list))
         for pid in self.pid_list:
