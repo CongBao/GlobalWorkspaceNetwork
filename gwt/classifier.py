@@ -28,7 +28,8 @@ class Flag(object):
         self.config_file = None
         self.do_train = True
         self.do_valid = True
-        self.do_test = False
+        self.do_test = True
+        self.cv_index = 0
         self.learning_rate = 1e-3
         self.n_train_epoch = 25
         self.train_batch_size = 32
@@ -53,13 +54,17 @@ class EmoPainExample(object):
 
 class EmoPainProcessor(object):
 
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, out_id=0):
         data = json.load(open(data_dir, 'r'))
-        self.examples = []
+        self.out_id = out_id
+        self.pid_list = []
+        self.example_dict = {}
         self.max_length = 0
         for pid, motion_dict in data.items():
+            self.pid_list.append(pid)
+            examples = []
             for mid, content in motion_dict.items():
-                self.examples.append(EmoPainExample(
+                examples.append(EmoPainExample(
                     uid='{0}_{1}'.format(pid, mid),
                     pose=np.asarray(content['pose'], dtype=np.float32),
                     emg=np.asarray(content['emg'], dtype=np.float32),
@@ -70,21 +75,23 @@ class EmoPainProcessor(object):
                 assert pose_len == emg_len
                 if pose_len >= self.max_length:
                     self.max_length = pose_len
-        for _ in range(len(self.examples)):
-            example = self.examples.pop()
-            pose_shape = example.pose.shape
-            emg_shape = example.emg.shape
-            assert pose_shape[0] == emg_shape[0]
-            diff = self.max_length - pose_shape[0]
-            pose_patch = np.zeros((diff, pose_shape[1]))
-            emg_patch = np.zeros((diff, emg_shape[1]))
-            example.pose = np.concatenate([pose_patch, example.pose]) # pad zero at front
-            example.emg = np.concatenate([emg_patch, example.emg])
-            self.examples.insert(0, example)
-        random.seed(13)
-        random.shuffle(self.examples)
-        self.train_idx = int(0.8*len(self.examples))
-        self.valid_idx = self.train_idx + int(0.1*len(self.examples))
+            self.example_dict[pid] = examples
+        self.pid_list.sort()
+        assert self.out_id in range(len(self.pid_list))
+        for pid in self.pid_list:
+            examples = self.example_dict[pid]
+            for _ in range(len(examples)):
+                example = examples.pop()
+                pose_shape = example.pose.shape
+                emg_shape = example.emg.shape
+                assert pose_shape[0] == emg_shape[0]
+                diff = self.max_length - pose_shape[0]
+                pose_patch = np.zeros((diff, pose_shape[1]))
+                emg_patch = np.zeros((diff, emg_shape[1]))
+                example.pose = np.concatenate([pose_patch, example.pose])
+                example.emg = np.concatenate([emg_patch, example.emg])
+                examples.insert(0, example)
+            self.example_dict[pid] = examples
 
     @staticmethod
     def label_class(num):
@@ -97,17 +104,25 @@ class EmoPainProcessor(object):
     def get_n_label():
         return 2
 
+    def get_id_list(self):
+        return self.pid_list
+
     def get_max_seq_length(self):
         return self.max_length
 
     def get_train_examples(self):
-        return self.examples[:self.train_idx]
+        examples = []
+        pid_list = self.pid_list.copy()
+        pid_list.pop(self.out_id)
+        for pid in pid_list:
+            examples.extend(self.example_dict[pid])
+        return examples
 
     def get_valid_examples(self):
-        return self.examples[self.train_idx:self.valid_idx]
+        return self.example_dict[self.pid_list[self.out_id]]
 
     def get_test_examples(self):
-        return self.examples[self.valid_idx:]
+        return self.get_valid_examples()
 
 
 
@@ -245,7 +260,7 @@ def main(FLAG):
 
     tf.gfile.MakeDirs(FLAG.output_dir)
 
-    epp = EmoPainProcessor(FLAG.data_path)
+    epp = EmoPainProcessor(FLAG.data_path. FLAG.cv_index)
 
     n_train_step = None
     if FLAG.do_train:

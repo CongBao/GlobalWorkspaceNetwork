@@ -17,48 +17,18 @@ import tensorflow as tf
 
 class GWTConfig(object):
 
-    def __init__(self,
-                 gws_size=64, # M*H
-                 proj_size=64, # M*H
-                 inter_size=128, # 4*H
-                 hidden_size=32, # H
-                 n_head=2, # N
-                 self_atten=True,
-                 atten_type='general',
-                 map_activ=None,
-                 proj_activ='tanh',
-                 inter_activ='gelu',
-                 drop_rate=0.1):
-        self.gws_size = gws_size
-        self.proj_size = proj_size
-        self.inter_size = inter_size
-        self.hidden_size = hidden_size
-        self.n_head = n_head
-        self.self_atten = self_atten
-        self.atten_type = atten_type
-        self.map_activ = map_activ
-        self.proj_activ = proj_activ
-        self.inter_activ = inter_activ
-        self.drop_rate = drop_rate
-
-    @classmethod
-    def from_dict(cls, json_obj):
-        config = GWTConfig()
-        for k, v in six.iteritems(json_obj):
-            config.__dict__[k] = v
-        return config
-
-    @classmethod
-    def from_json_file(cls, json_file):
-        with tf.gfile.GFile(json_file, 'r') as reader:
-            text = reader.read()
-        return cls.from_dict(json.loads(text))
-
-    def to_dict(self):
-        return copy.deepcopy(self.__dict__)
-
-    def to_json_string(self):
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + '\n'
+    def __init__(self):
+        self.gws_size = 64
+        self.proj_size = 64
+        self.inter_size = 128
+        self.hidden_size = 32
+        self.n_head = 2
+        self.self_atten = True
+        self.atten_type = 'general'
+        self.map_activ = None
+        self.proj_activ = 'tanh'
+        self.inter_activ = 'gelu'
+        self.drop_rate = 0.1
 
 
 
