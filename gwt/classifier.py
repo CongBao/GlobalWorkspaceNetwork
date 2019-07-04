@@ -25,7 +25,6 @@ class Flag(object):
         self.data_path = None
         self.ckpt_path = None
         self.output_dir = 'output/'
-        self.config_file = None
         self.do_train = True
         self.do_valid = True
         self.do_test = True
@@ -258,11 +257,6 @@ def main(FLAG):
 
     tf.logging.set_verbosity(tf.logging.INFO)
 
-    if FLAG.config_file is not None:
-        config = model.GWTConfig.from_json_file(FLAG.config_file)
-    else:
-        config = model.GWTConfig()
-
     tf.gfile.MakeDirs(FLAG.output_dir)
 
     epp = EmoPainProcessor(FLAG.data_path. FLAG.cv_index)
@@ -297,7 +291,7 @@ def main(FLAG):
         )
 
     model_fn = model_fn_builder(
-        config=config,
+        config=model.GWTConfig(),
         n_label=epp.get_n_label(),
         learning_rate=FLAG.learning_rate,
         n_train_step=n_train_step,
