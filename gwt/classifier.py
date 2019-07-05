@@ -60,8 +60,6 @@ class EmoPainProcessor(object):
         self.max_length = 0
         pid_set = set()
         for pdid, motion_dict in data.items():
-            pid = pdid.split('_')[0]
-            pid_set.add(pid)
             examples = []
             for mid, content in motion_dict.items():
                 examples.append(EmoPainExample(
@@ -75,6 +73,10 @@ class EmoPainProcessor(object):
                 assert pose_len == emg_len
                 if pose_len >= self.max_length:
                     self.max_length = pose_len
+            if len(examples) == 0:
+                continue
+            pid = pdid.split('_')[0]
+            pid_set.add(pid)
             if pid not in self.example_dict.keys():
                 self.example_dict[pid] = examples
             else:
