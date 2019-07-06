@@ -5,6 +5,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+import gc
 import os
 import re
 import json
@@ -151,6 +152,27 @@ class EmoPainProcessor(object):
         return output
 
     @staticmethod
+    def write_examples(examples, output_path):
+        writer = tf.io.TFRecordWriter(output_path)
+        for example in examples:
+            features = collections.OrderedDict()
+            features['pose'] = tf.train.FeatureList(feature=[
+                tf.train.Feature(float_list=tf.train.FloatList(value=feat))
+                for feat in example.pose
+            ])
+            features['emg'] = tf.train.FeatureList(feature=[
+                tf.train.Feature(float_list=tf.train.FloatList(value=feat))
+                for feat in example.emg
+            ])
+            label = tf.train.Feature(int64_list=tf.train.Int64List(value=[example.label]))
+            tf_example = tf.train.SequenceExample(
+                context=tf.train.Features(feature={'label': label}),
+                feature_lists=tf.train.FeatureLists(feature_list=features)
+            )
+            writer.write(tf_example.SerializeToString())
+        writer.close()
+
+    @staticmethod
     def label_class(num):
         if num == 0.0:
             return 0
@@ -161,28 +183,44 @@ class EmoPainProcessor(object):
     def get_n_label():
         return 2
 
+    def get_pose_feat_size(self):
+        return self.example_dict[self.pid_list[0]][0].pose.shape[-1]
+
+    def get_emg_feat_size(self):
+        return self.example_dict[self.pid_list[0]][0].emg.shape[-1]
+
     def get_id_list(self):
         return self.pid_list
 
     def get_max_seq_length(self):
         return self.max_length
 
-    def get_train_examples(self, pose_aug=False, emg_aug=False):
+    def get_train_examples(self, pose_aug=False, emg_aug=False, to_file=None):
         examples = []
         for i, pid in enumerate(self.pid_list):
             if i not in self.out_ids:
                 examples.extend(self._augment(self.example_dict[pid], pose_aug, emg_aug))
-        return examples
+        gc.collect()
+        if to_file is not None:
+            self.write_examples(examples, to_file)
+            return len(examples)
+        else:
+            return examples
 
-    def get_valid_examples(self):
+    def get_valid_examples(self, to_file=None):
         examples = []
         for oid in self.out_ids:
             pid = self.pid_list[oid]
             examples.extend(self.example_dict[pid])
-        return examples
+        gc.collect()
+        if to_file is not None:
+            self.write_examples(examples, to_file)
+            return len(examples)
+        else:
+            return examples
 
-    def get_test_examples(self):
-        return self.get_valid_examples()
+    def get_test_examples(self, to_file=None):
+        return self.get_valid_examples(to_file)
 
 
 
@@ -213,22 +251,52 @@ def input_fn_builder(examples, seq_length, batch_size, is_training):
                 shape=[n_example, seq_length, emg_feat_size],
                 dtype=tf.float32
             ),
-            'labels': tf.constant(
+            'label': tf.constant(
                 value=labels,
                 shape=[n_example],
                 dtype=tf.int32
             )
         })
-
         if is_training:
             d = d.repeat()
             d = d.shuffle(100)
-
         d = d.batch(batch_size)
-
         return d
     
     return input_fn
+
+
+
+def tf_record_input_fn_builder(record_path, pose_feat_size, emg_feat_size, batch_size, is_training):
+
+    context_feat = {
+        'label': tf.FixedLenFeature([], tf.int64)
+    }
+    sequence_feat = {
+        'pose': tf.FixedLenSequenceFeature([pose_feat_size], tf.float32),
+        'emg': tf.FixedLenSequenceFeature([emg_feat_size], tf.float32)
+    }
+
+    def map_func(record):
+        res = tf.io.parse_single_sequence_example(
+            serialized=record,
+            context_features=context_feat,
+            sequence_features=sequence_feat
+        )
+        return {**res[0], **res[1]}
+
+    def input_fn(params):
+        d = tf.data.TFRecordDataset(record_path)
+        if is_training:
+            d = d.repeat()
+            d = d.shuffle(100)
+        d = d.map(map_func)
+        d = d.batch(batch_size)
+        return d
+
+    return input_fn
+
+
 
 def create_model(inputs, labels, config, is_training, n_label):
     
@@ -254,12 +322,14 @@ def create_model(inputs, labels, config, is_training, n_label):
 
     return loss, per_sample_loss, log_prob, dists
 
+
+
 def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=None):
 
     def model_fn(features, labels, mode, params):
         pose = features['pose']
         emg = features['emg']
-        label = features['labels']
+        label = features['label']
 
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
@@ -309,6 +379,8 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
 
     return model_fn
 
+
+
 def main(FLAG):
 
     tf.logging.set_verbosity(tf.logging.INFO)
@@ -319,11 +391,13 @@ def main(FLAG):
 
     n_train_step = None
     if FLAG.do_train:
-        train_examples = epp.get_train_examples(FLAG.pose_aug, FLAG.emg_aug)
-        n_train_step = int(len(train_examples)/FLAG.train_batch_size*FLAG.n_train_epoch)
-        train_input_fn = input_fn_builder(
-            examples=train_examples,
-            seq_length=epp.get_max_seq_length(),
+        train_record_path = os.path.join(FLAG.output_dir, 'train.tfrecord')
+        n_train_example = epp.get_train_examples(FLAG.pose_aug, FLAG.emg_aug, train_record_path)
+        n_train_step = int(n_train_example/FLAG.train_batch_size*FLAG.n_train_epoch)
+        train_input_fn = tf_record_input_fn_builder(
+            record_path=train_record_path,
+            pose_feat_size=epp.get_pose_feat_size(),
+            emg_feat_size=epp.get_emg_feat_size(),
             batch_size=FLAG.train_batch_size,
             is_training=True
         )
@@ -371,7 +445,7 @@ def main(FLAG):
         tf.logging.info('*******************************************')
         tf.logging.info('***** Running Training and Validation *****')
         tf.logging.info('*******************************************')
-        tf.logging.info('  Train num examples = {}'.format(len(train_examples)))
+        tf.logging.info('  Train num examples = {}'.format(n_train_example))
         tf.logging.info('  Eval num examples = {}'.format(len(valid_examples)))
         tf.logging.info('  Train batch size = {}'.format(FLAG.train_batch_size))
         tf.logging.info('  Eval batch size = {}'.format(FLAG.valid_batch_size))
@@ -384,7 +458,7 @@ def main(FLAG):
         tf.logging.info('****************************')
         tf.logging.info('***** Running Training *****')
         tf.logging.info('****************************')
-        tf.logging.info('  Num examples = {}'.format(len(train_examples)))
+        tf.logging.info('  Num examples = {}'.format(n_train_example))
         tf.logging.info('  Batch size = {}'.format(FLAG.train_batch_size))
         tf.logging.info('  Num steps = {}'.format(n_train_step))
         estimator.train(input_fn=train_input_fn, max_steps=n_train_step)
@@ -423,6 +497,8 @@ def main(FLAG):
                 tf.logging.info('  ID: {0}\tLabel: {1}\tPrediction: {2}\t{3}'.format(uid, lab, res, emo))
                 output[uid] = {'label': lab, 'pred': res, 'dist': dis}
             writer.write(json.dumps(output))
+
+
 
 if __name__ == "__main__":
     main(Flag())

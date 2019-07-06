@@ -189,6 +189,8 @@ def mapping(input_list, units, activ=None, dropout=0.0):
     
     return inputs
 
+
+
 def projection(features, units, activ=None, dropout=0.0):
     
     assert_rank(features, 2) # (B, G)
@@ -200,6 +202,8 @@ def projection(features, units, activ=None, dropout=0.0):
     )(proj) # (B, P)
 
     return proj
+
+
 
 def attention(sbj, obj, n_head, head_size, inter_size, inter_activ, atten_type, drop_rate):
 
@@ -298,6 +302,8 @@ def attention(sbj, obj, n_head, head_size, inter_size, inter_activ, atten_type, 
 
     return output, dist
 
+
+
 def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_activ, atten_type, drop_rate, self_atten):
 
     input_shape = get_shape(inputs, expected_rank=4) # (B, M, S, H)
@@ -349,6 +355,8 @@ def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_acti
 
     return outputs, dists
 
+
+
 def get_activ_fn(activ_str):
     if not isinstance(activ_str, six.string_types):
         return activ_str
@@ -359,6 +367,8 @@ def get_activ_fn(activ_str):
         return lambda x: 0.5*x*(1.0+tf.tanh(np.sqrt(2/np.pi)*(x+0.044715*tf.pow(x, 3))))
     else:
         return tf.keras.layers.Activation(activ)
+
+
 
 def get_shape(tensor, expected_rank=None, name=None):
     if name is None:
@@ -376,6 +386,8 @@ def get_shape(tensor, expected_rank=None, name=None):
     for idx in non_static_indexes:
         shape[idx] = dyn_shape[idx]
     return shape
+
+
 
 def assert_rank(tensor, expected_rank, name=None):
     if name is None:
