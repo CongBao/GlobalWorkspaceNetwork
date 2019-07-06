@@ -28,7 +28,9 @@ class Flag(object):
         self.do_train = True
         self.do_valid = True
         self.do_test = True
-        self.cv_index = 0
+        self.cv_index = [8, 11, 13]
+        self.pose_aug = True
+        self.emg_aug = True
         self.learning_rate = 1e-3
         self.n_train_epoch = 25
         self.train_batch_size = 32
@@ -49,13 +51,21 @@ class EmoPainExample(object):
         self.emg = emg
         self.label = label
 
+    def copy(self, pose_deep=False, emg_deep=False):
+        return EmoPainExample(
+            uid=self.uid,
+            pose=self.pose.copy() if pose_deep else self.pose,
+            emg=self.emg.copy() if emg_deep else self.emg,
+            label=self.label
+        )
+
 
 
 class EmoPainProcessor(object):
 
-    def __init__(self, data_dir, out_id=0):
+    def __init__(self, data_dir, out_ids=[0]):
         data = json.load(open(data_dir, 'r'))
-        self.out_id = out_id
+        self.out_ids = out_ids
         self.example_dict = {}
         self.max_length = 0
         pid_set = set()
@@ -83,7 +93,8 @@ class EmoPainProcessor(object):
                 self.example_dict[pid].extend(examples)
         self.pid_list = list(pid_set)
         self.pid_list.sort()
-        assert self.out_id in range(len(self.pid_list))
+        for oid in self.out_ids:
+            assert oid in range(len(self.pid_list))
         for pid in self.pid_list:
             examples = self.example_dict[pid]
             for _ in range(len(examples)):
@@ -98,6 +109,46 @@ class EmoPainProcessor(object):
                 example.emg = np.concatenate([emg_patch, example.emg])
                 examples.insert(0, example)
             self.example_dict[pid] = examples
+
+    def _pose_aug(self, example):
+        res_x = example.copy(pose_deep=True)
+        res_x.uid += '_x'
+        res_x.pose[:,26:] *= -1.0
+        res_y = example.copy(pose_deep=True)
+        res_y.uid += '_y'
+        res_y.pose[:,:26] *= -1.0
+        res_y.pose[:,52:] *= -1.0
+        res_z = example.copy(pose_deep=True)
+        res_z.uid += '_z'
+        res_z.pose[:,:52] *= -1.0
+        return res_x, res_y, res_z
+
+    def _emg_aug(self, example):
+        example.uid += '_n'
+        return example
+
+    def _augment(self, examples, pose_aug, emg_aug):
+        if not pose_aug and not emg_aug:
+            return examples
+        output = []
+        for example in examples:
+            raw = example.copy()
+            raw.uid += '_r_r'
+            output.append(raw)
+            if pose_aug:
+                for res in self._pose_aug(example):
+                    res.uid += '_r'
+                    output.append(res)
+            if emg_aug:
+                res = example.copy(emg_deep=True)
+                res.uid += '_r'
+                res = self._emg_aug(res)
+                output.append(res)
+            if pose_aug and emg_aug:
+                for res in self._pose_aug(example):
+                    res = res.copy(emg_deep=True)
+                    output.append(self._emg_aug(res))
+        return output
 
     @staticmethod
     def label_class(num):
@@ -116,16 +167,19 @@ class EmoPainProcessor(object):
     def get_max_seq_length(self):
         return self.max_length
 
-    def get_train_examples(self):
+    def get_train_examples(self, pose_aug=False, emg_aug=False):
         examples = []
-        pid_list = self.pid_list.copy()
-        pid_list.pop(self.out_id)
-        for pid in pid_list:
-            examples.extend(self.example_dict[pid])
+        for i, pid in enumerate(self.pid_list):
+            if i not in self.out_ids:
+                examples.extend(self._augment(self.example_dict[pid], pose_aug, emg_aug))
         return examples
 
     def get_valid_examples(self):
-        return self.example_dict[self.pid_list[self.out_id]]
+        examples = []
+        for oid in self.out_ids:
+            pid = self.pid_list[oid]
+            examples.extend(self.example_dict[pid])
+        return examples
 
     def get_test_examples(self):
         return self.get_valid_examples()
@@ -265,7 +319,7 @@ def main(FLAG):
 
     n_train_step = None
     if FLAG.do_train:
-        train_examples = epp.get_train_examples()
+        train_examples = epp.get_train_examples(FLAG.pose_aug, FLAG.emg_aug)
         n_train_step = int(len(train_examples)/FLAG.train_batch_size*FLAG.n_train_epoch)
         train_input_fn = input_fn_builder(
             examples=train_examples,
