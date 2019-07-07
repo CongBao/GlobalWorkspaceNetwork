@@ -9,12 +9,14 @@ import gc
 import os
 import re
 import json
+import cmath
 import random
 import collections
 
 import emoji
 import numpy as np
 import tensorflow as tf
+import scipy.signal as sps
 
 import model
 
@@ -93,23 +95,23 @@ class EmoPainProcessor(object):
             else:
                 self.example_dict[pid].extend(examples)
         self.pid_list = list(pid_set)
-        self.pid_list.sort()
         for oid in self.out_ids:
             assert oid in range(len(self.pid_list))
-        for pid in self.pid_list:
-            examples = self.example_dict[pid]
-            for _ in range(len(examples)):
-                example = examples.pop()
-                pose_shape = example.pose.shape
-                emg_shape = example.emg.shape
-                assert pose_shape[0] == emg_shape[0]
-                diff = self.max_length - pose_shape[0]
-                pose_patch = np.zeros((diff, pose_shape[1]))
-                emg_patch = np.zeros((diff, emg_shape[1]))
-                example.pose = np.concatenate([pose_patch, example.pose])
-                example.emg = np.concatenate([emg_patch, example.emg])
-                examples.insert(0, example)
-            self.example_dict[pid] = examples
+        self.pid_list.sort()
+
+    def _pad(self, examples):
+        for _ in range(len(examples)):
+            example = examples.pop()
+            pose_shape = example.pose.shape
+            emg_shape = example.emg.shape
+            assert pose_shape[0] == emg_shape[0]
+            diff = self.max_length - pose_shape[0]
+            pose_patch = np.zeros((diff, pose_shape[1]))
+            emg_patch = np.zeros((diff, emg_shape[1]))
+            example.pose = np.concatenate([pose_patch, example.pose])
+            example.emg = np.concatenate([emg_patch, example.emg])
+            examples.insert(0, example)
+        return examples
 
     def _pose_aug(self, example):
         res_x = example.copy(pose_deep=True)
@@ -126,6 +128,21 @@ class EmoPainProcessor(object):
 
     def _emg_aug(self, example):
         example.uid += '_n'
+        emg_list = []
+        for i in range(example.emg.shape[-1]):
+            emgx = example.emg[:,i].tolist()
+            tail = None
+            if len(emgx) & 1: # odd
+                tail = emgx.pop()
+            _, _, Z = sps.stft(emgx, fs=1e3, nperseg=len(emgx))
+            amp, phase = np.vectorize(cmath.polar)(Z)
+            amp += np.random.normal(scale=1e-5, size=amp.shape)
+            rect = np.vectorize(cmath.rect)(amp, phase)
+            _, x = sps.istft(rect, fs=1e3)
+            if tail is not None:
+                x = np.append(x, tail)
+            emg_list.append(x)
+        example.emg = np.asarray(emg_list, dtype=np.float32).T
         return example
 
     def _augment(self, examples, pose_aug, emg_aug):
@@ -199,7 +216,7 @@ class EmoPainProcessor(object):
         examples = []
         for i, pid in enumerate(self.pid_list):
             if i not in self.out_ids:
-                examples.extend(self._augment(self.example_dict[pid], pose_aug, emg_aug))
+                examples.extend(self._pad(self._augment(self.example_dict[pid], pose_aug, emg_aug)))
         gc.collect()
         if to_file is not None:
             self.write_examples(examples, to_file)
@@ -211,7 +228,7 @@ class EmoPainProcessor(object):
         examples = []
         for oid in self.out_ids:
             pid = self.pid_list[oid]
-            examples.extend(self.example_dict[pid])
+            examples.extend(self._pad(self.example_dict[pid]))
         gc.collect()
         if to_file is not None:
             self.write_examples(examples, to_file)
