@@ -16,7 +16,6 @@ import collections
 import emoji
 import numpy as np
 import tensorflow as tf
-import scipy.signal as sps
 
 import model
 
@@ -32,8 +31,6 @@ class Flag(object):
         self.do_valid = True
         self.do_test = True
         self.cv_index = [8, 11, 13]
-        self.pose_aug = True
-        self.emg_aug = True
         self.learning_rate = 1e-3
         self.n_train_epoch = 25
         self.train_batch_size = 32
@@ -100,8 +97,7 @@ class EmoPainProcessor(object):
         self.pid_list.sort()
 
     def _pad(self, examples):
-        for _ in range(len(examples)):
-            example = examples.pop()
+        for example in examples:
             pose_shape = example.pose.shape
             emg_shape = example.emg.shape
             assert pose_shape[0] == emg_shape[0]
@@ -110,63 +106,47 @@ class EmoPainProcessor(object):
             emg_patch = np.zeros((diff, emg_shape[1]))
             example.pose = np.concatenate([pose_patch, example.pose])
             example.emg = np.concatenate([emg_patch, example.emg])
-            examples.insert(0, example)
-        return examples
+            yield example
 
-    def _pose_aug(self, example):
-        res_x = example.copy(pose_deep=True)
-        res_x.uid += '_x'
-        res_x.pose[:,26:] *= -1.0
-        res_y = example.copy(pose_deep=True)
-        res_y.uid += '_y'
-        res_y.pose[:,:26] *= -1.0
-        res_y.pose[:,52:] *= -1.0
-        res_z = example.copy(pose_deep=True)
-        res_z.uid += '_z'
-        res_z.pose[:,:52] *= -1.0
-        return res_x, res_y, res_z
-
-    def _emg_aug(self, example):
-        example.uid += '_n'
-        emg_list = []
-        for i in range(example.emg.shape[-1]):
-            emgx = example.emg[:,i].tolist()
-            tail = None
-            if len(emgx) & 1: # odd
-                tail = emgx.pop()
-            _, _, Z = sps.stft(emgx, fs=1e3, nperseg=len(emgx))
-            amp, phase = np.vectorize(cmath.polar)(Z)
-            amp += np.random.normal(scale=1e-5, size=amp.shape)
-            rect = np.vectorize(cmath.rect)(amp, phase)
-            _, x = sps.istft(rect, fs=1e3)
-            if tail is not None:
-                x = np.append(x, tail)
-            emg_list.append(x)
-        example.emg = np.asarray(emg_list, dtype=np.float32).T
-        return example
-
-    def _augment(self, examples, pose_aug, emg_aug):
-        if not pose_aug and not emg_aug:
-            return examples
-        output = []
+    def _aug(self, examples):
         for example in examples:
             raw = example.copy()
-            raw.uid += '_r_r'
-            output.append(raw)
-            if pose_aug:
-                for res in self._pose_aug(example):
-                    res.uid += '_r'
-                    output.append(res)
-            if emg_aug:
-                res = example.copy(emg_deep=True)
-                res.uid += '_r'
-                res = self._emg_aug(res)
-                output.append(res)
-            if pose_aug and emg_aug:
-                for res in self._pose_aug(example):
-                    res = res.copy(emg_deep=True)
-                    output.append(self._emg_aug(res))
-        return output
+            raw.uid += '_o'
+            yield raw
+            flip_x = example.copy(1, 0)
+            flip_x.uid += '_x'
+            flip_x.pose[:, 26:] *= -1.0
+            yield flip_x
+            flip_y = example.copy(1, 0)
+            flip_y.uid += '_y'
+            flip_y.pose[:, :26] *= -1.0
+            flip_y.pose[:, 52:] *= -1.0
+            yield flip_y
+            flip_z = example.copy(1, 0)
+            flip_z.uid += '_z'
+            flip_z.pose[:, :52] *= -1.0
+            yield flip_z
+            flip_xy = example.copy(1, 0)
+            flip_xy.uid += '_xy'
+            flip_xy.pose[:, 52:] *= -1.0
+            yield flip_xy
+            flip_xz = example.copy(1, 0)
+            flip_xz.uid += '_xz'
+            flip_xz.pose[:, 26:52] *= -1.0
+            yield flip_xz
+            flip_yz = example.copy(1, 0)
+            flip_yz.uid += '_yz'
+            flip_yz.pose[:, :26] *= -1.0
+            yield flip_yz
+            flip_xyz = example.copy(1, 0)
+            flip_xyz.uid += '_xyz'
+            flip_xyz.pose *= -1.0
+            yield flip_xyz
+            reverse = example.copy(1, 1)
+            reverse.uid += '_r'
+            reverse.pose = np.flip(reverse.pose, 0)
+            reverse.emg = np.flip(reverse.emg, 0)
+            yield reverse
 
     @staticmethod
     def write_examples(examples, output_path):
@@ -212,11 +192,11 @@ class EmoPainProcessor(object):
     def get_max_seq_length(self):
         return self.max_length
 
-    def get_train_examples(self, pose_aug=False, emg_aug=False, to_file=None):
+    def get_train_examples(self, to_file=None):
         examples = []
         for i, pid in enumerate(self.pid_list):
             if i not in self.out_ids:
-                examples.extend(self._pad(self._augment(self.example_dict[pid], pose_aug, emg_aug)))
+                examples.extend(self._pad(self._aug(self.example_dict[pid])))
         gc.collect()
         if to_file is not None:
             self.write_examples(examples, to_file)
@@ -409,7 +389,7 @@ def main(FLAG):
     n_train_step = None
     if FLAG.do_train:
         train_record_path = os.path.join(FLAG.output_dir, 'train.tfrecord')
-        n_train_example = epp.get_train_examples(FLAG.pose_aug, FLAG.emg_aug, train_record_path)
+        n_train_example = epp.get_train_examples(train_record_path)
         n_train_step = int(n_train_example/FLAG.train_batch_size*FLAG.n_train_epoch)
         train_input_fn = tf_record_input_fn_builder(
             record_path=train_record_path,
