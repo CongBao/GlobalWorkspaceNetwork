@@ -113,6 +113,18 @@ class EmoPainProcessor(object):
             raw = example.copy()
             raw.uid += '_o'
             yield raw
+            ro_90 = example.copy(1, 0)
+            ro_90.uid += '_90'
+            ro_90.pose = self.rotate(ro_90.pose, np.pi/2.)
+            yield ro_90
+            ro_180 = example.copy(1, 0)
+            ro_180.uid += '_180'
+            ro_180.pose = self.rotate(ro_180.pose, np.pi)
+            yield ro_180
+            ro_270 = example.copy(1, 0)
+            ro_270.uid += '_270'
+            ro_270.pose = self.rotate(ro_270.pose, -np.pi/2.)
+            yield ro_270
             flip_x = example.copy(1, 0)
             flip_x.uid += '_x'
             flip_x.pose[:, 26:] *= -1.0
@@ -144,9 +156,25 @@ class EmoPainProcessor(object):
             yield flip_xyz
             reverse = example.copy(1, 1)
             reverse.uid += '_r'
-            reverse.pose = np.flip(reverse.pose, 0)
-            reverse.emg = np.flip(reverse.emg, 0)
+            reverse.pose = reverse.pose[::-1]
+            reverse.emg = reverse.emg[::-1]
             yield reverse
+
+    @staticmethod
+    def rotate(seq, rad):
+        rm = np.array([
+            [np.cos(rad),  0., np.sin(rad)],
+            [0.,           1.,          0.],
+            [-np.sin(rad), 0., np.cos(rad)]
+        ], dtype=np.float32) # along y-axis
+        seq = seq.reshape(len(seq), 3, -1)
+        cen = np.mean(seq, axis=-1, keepdims=1)
+        rot = np.matmul(rm, seq)
+        cen_rot = np.mean(rot, axis=-1, keepdims=1)
+        diff = cen_rot - cen
+        res = rot - diff
+        res = res.reshape(len(res), -1)
+        return res
 
     @staticmethod
     def write_examples(examples, output_path):
@@ -234,7 +262,7 @@ def input_fn_builder(examples, seq_length, batch_size, is_training):
         pose_examples.append(example.pose)
         emg_examples.append(example.emg)
         labels.append(example.label)
-    
+
     def input_fn(params):
         n_example = len(examples)
         d = tf.data.Dataset.from_tensor_slices({
@@ -259,7 +287,7 @@ def input_fn_builder(examples, seq_length, batch_size, is_training):
             d = d.shuffle(100)
         d = d.batch(batch_size)
         return d
-    
+
     return input_fn
 
 
