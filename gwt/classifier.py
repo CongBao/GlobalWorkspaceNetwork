@@ -125,40 +125,6 @@ class EmoPainProcessor(object):
             ro_270.uid += '_270'
             ro_270.pose = self.rotate(ro_270.pose, -np.pi/2.)
             yield ro_270
-            flip_x = example.copy(1, 0)
-            flip_x.uid += '_x'
-            flip_x.pose[:, 26:] *= -1.0
-            yield flip_x
-            flip_y = example.copy(1, 0)
-            flip_y.uid += '_y'
-            flip_y.pose[:, :26] *= -1.0
-            flip_y.pose[:, 52:] *= -1.0
-            yield flip_y
-            flip_z = example.copy(1, 0)
-            flip_z.uid += '_z'
-            flip_z.pose[:, :52] *= -1.0
-            yield flip_z
-            flip_xy = example.copy(1, 0)
-            flip_xy.uid += '_xy'
-            flip_xy.pose[:, 52:] *= -1.0
-            yield flip_xy
-            flip_xz = example.copy(1, 0)
-            flip_xz.uid += '_xz'
-            flip_xz.pose[:, 26:52] *= -1.0
-            yield flip_xz
-            flip_yz = example.copy(1, 0)
-            flip_yz.uid += '_yz'
-            flip_yz.pose[:, :26] *= -1.0
-            yield flip_yz
-            flip_xyz = example.copy(1, 0)
-            flip_xyz.uid += '_xyz'
-            flip_xyz.pose *= -1.0
-            yield flip_xyz
-            reverse = example.copy(1, 1)
-            reverse.uid += '_r'
-            reverse.pose = reverse.pose[::-1]
-            reverse.emg = reverse.emg[::-1]
-            yield reverse
 
     @staticmethod
     def rotate(seq, rad):
@@ -167,12 +133,8 @@ class EmoPainProcessor(object):
             [0.,           1.,          0.],
             [-np.sin(rad), 0., np.cos(rad)]
         ], dtype=np.float32) # along y-axis
-        seq = seq.reshape(len(seq), 3, -1)
-        cen = np.mean(seq, axis=-1, keepdims=1)
-        rot = np.matmul(rm, seq)
-        cen_rot = np.mean(rot, axis=-1, keepdims=1)
-        diff = cen_rot - cen
-        res = rot - diff
+        res = seq.reshape(len(seq), 3, -1)
+        res = np.matmul(rm, res)
         res = res.reshape(len(res), -1)
         return res
 
