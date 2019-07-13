@@ -30,6 +30,8 @@ class Flag(object):
         self.do_train = True
         self.do_valid = True
         self.do_test = True
+        self.padding = True
+        self.augment = True
         self.cv_index = [8, 11, 13]
         self.learning_rate = 1e-3
         self.n_train_epoch = 25
@@ -182,11 +184,16 @@ class EmoPainProcessor(object):
     def get_max_seq_length(self):
         return self.max_length
 
-    def get_train_examples(self, to_file=None):
+    def get_train_examples(self, to_file=None, pad=True, aug=True):
         examples = []
         for i, pid in enumerate(self.pid_list):
             if i not in self.out_ids:
-                examples.extend(self._pad(self._aug(self.example_dict[pid])))
+                res = self.example_dict[pid]
+                if aug:
+                    res = self._aug(res)
+                if pad:
+                    res = self._pad(res)
+                examples.extend(res)
         gc.collect()
         if to_file is not None:
             self.write_examples(examples, to_file)
@@ -194,11 +201,14 @@ class EmoPainProcessor(object):
         else:
             return examples
 
-    def get_valid_examples(self, to_file=None):
+    def get_valid_examples(self, to_file=None, pad=True):
         examples = []
         for oid in self.out_ids:
             pid = self.pid_list[oid]
-            examples.extend(self._pad(self.example_dict[pid]))
+            res = self.example_dict[pid]
+            if pad:
+                res = self._pad(res)
+            examples.extend(res)
         gc.collect()
         if to_file is not None:
             self.write_examples(examples, to_file)
@@ -206,8 +216,8 @@ class EmoPainProcessor(object):
         else:
             return examples
 
-    def get_test_examples(self, to_file=None):
-        return self.get_valid_examples(to_file)
+    def get_test_examples(self, to_file=None, pad=True):
+        return self.get_valid_examples(to_file, pad)
 
 
 
@@ -379,7 +389,7 @@ def main(FLAG):
     n_train_step = None
     if FLAG.do_train:
         train_record_path = os.path.join(FLAG.output_dir, 'train.tfrecord')
-        n_train_example = epp.get_train_examples(train_record_path)
+        n_train_example = epp.get_train_examples(train_record_path, FLAG.padding, FLAG.augment)
         n_train_step = int(n_train_example/FLAG.train_batch_size*FLAG.n_train_epoch)
         train_input_fn = tf_record_input_fn_builder(
             record_path=train_record_path,
@@ -390,7 +400,7 @@ def main(FLAG):
         )
 
     if FLAG.do_valid:
-        valid_examples = epp.get_valid_examples()
+        valid_examples = epp.get_valid_examples(pad=FLAG.padding)
         valid_input_fn = input_fn_builder(
             examples=valid_examples,
             seq_length=epp.get_max_seq_length(),
@@ -399,7 +409,7 @@ def main(FLAG):
         )
 
     if FLAG.do_test:
-        test_examples = epp.get_test_examples()
+        test_examples = epp.get_test_examples(pad=FLAG.padding)
         test_input_fn = input_fn_builder(
             examples=test_examples,
             seq_length=epp.get_max_seq_length(),
