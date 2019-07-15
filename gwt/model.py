@@ -332,7 +332,7 @@ def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_acti
         if self_atten:
             sbj_tensors = obj_tensors # (B, M, H)
         else:
-            sbj_tensors = cell_output[:, None, :] # (B, 1, G)
+            sbj_tensors = tf.stop_gradient(cell_output[:, None, :]) # (B, 1, G)
         atten_res, atten_dist = attention(
             sbj=sbj_tensors,
             obj=obj_tensors,
