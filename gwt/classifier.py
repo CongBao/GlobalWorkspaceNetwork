@@ -30,14 +30,16 @@ class Flag(object):
         self.do_train = True
         self.do_valid = True
         self.do_test = True
+        self.train_ids = None
+        self.valid_ids = None
+        self.test_ids = None
         self.padding = True
         self.augment = True
-        self.cv_index = [8, 11, 13]
         self.learning_rate = 1e-3
-        self.n_train_epoch = 25
-        self.train_batch_size = 32
-        self.valid_batch_size = 8
-        self.test_batch_size = 8
+        self.n_train_epoch = 30
+        self.train_batch_size = 64
+        self.valid_batch_size = 16
+        self.test_batch_size = 16
         self.save_summary_steps = 5
         self.save_checkpoints_steps = 5
         self.keep_checkpoint_max = None
@@ -65,9 +67,8 @@ class EmoPainExample(object):
 
 class EmoPainProcessor(object):
 
-    def __init__(self, data_dir, out_ids=[0]):
+    def __init__(self, data_dir):
         data = json.load(open(data_dir, 'r'))
-        self.out_ids = out_ids
         self.example_dict = {}
         self.max_length = 0
         pid_set = set()
@@ -94,39 +95,18 @@ class EmoPainProcessor(object):
             else:
                 self.example_dict[pid].extend(examples)
         self.pid_list = list(pid_set)
-        for oid in self.out_ids:
-            assert oid in range(len(self.pid_list))
         self.pid_list.sort()
 
-    def _pad(self, examples):
-        for example in examples:
-            pose_shape = example.pose.shape
-            emg_shape = example.emg.shape
-            assert pose_shape[0] == emg_shape[0]
-            diff = self.max_length - pose_shape[0]
-            pose_patch = np.zeros((diff, pose_shape[1]))
-            emg_patch = np.zeros((diff, emg_shape[1]))
-            example.pose = np.concatenate([pose_patch, example.pose])
-            example.emg = np.concatenate([emg_patch, example.emg])
-            yield example
+    @staticmethod
+    def label_class(num):
+        if num == 0.0:
+            return 0
+        else:
+            return 1
 
-    def _aug(self, examples):
-        for example in examples:
-            raw = example.copy()
-            raw.uid += '_o'
-            yield raw
-            ro_90 = example.copy(1, 0)
-            ro_90.uid += '_90'
-            ro_90.pose = self.rotate(ro_90.pose, np.pi/2.)
-            yield ro_90
-            ro_180 = example.copy(1, 0)
-            ro_180.uid += '_180'
-            ro_180.pose = self.rotate(ro_180.pose, np.pi)
-            yield ro_180
-            ro_270 = example.copy(1, 0)
-            ro_270.uid += '_270'
-            ro_270.pose = self.rotate(ro_270.pose, -np.pi/2.)
-            yield ro_270
+    @staticmethod
+    def get_n_label():
+        return 2
 
     @staticmethod
     def rotate(seq, rad):
@@ -161,16 +141,35 @@ class EmoPainProcessor(object):
             writer.write(tf_example.SerializeToString())
         writer.close()
 
-    @staticmethod
-    def label_class(num):
-        if num == 0.0:
-            return 0
-        else:
-            return 1
+    def _pad(self, examples):
+        for example in examples:
+            pose_shape = example.pose.shape
+            emg_shape = example.emg.shape
+            assert pose_shape[0] == emg_shape[0]
+            diff = self.max_length - pose_shape[0]
+            pose_patch = np.zeros((diff, pose_shape[1]))
+            emg_patch = np.zeros((diff, emg_shape[1]))
+            example.pose = np.concatenate([pose_patch, example.pose])
+            example.emg = np.concatenate([emg_patch, example.emg])
+            yield example
 
-    @staticmethod
-    def get_n_label():
-        return 2
+    def _aug(self, examples):
+        for example in examples:
+            raw = example.copy()
+            raw.uid += '_o'
+            yield raw
+            ro_90 = example.copy(1, 0)
+            ro_90.uid += '_90'
+            ro_90.pose = self.rotate(ro_90.pose, np.pi/2.)
+            yield ro_90
+            ro_180 = example.copy(1, 0)
+            ro_180.uid += '_180'
+            ro_180.pose = self.rotate(ro_180.pose, np.pi)
+            yield ro_180
+            ro_270 = example.copy(1, 0)
+            ro_270.uid += '_270'
+            ro_270.pose = self.rotate(ro_270.pose, -np.pi/2.)
+            yield ro_270
 
     def get_pose_feat_size(self):
         return self.example_dict[self.pid_list[0]][0].pose.shape[-1]
@@ -184,28 +183,17 @@ class EmoPainProcessor(object):
     def get_max_seq_length(self):
         return self.max_length
 
-    def get_train_examples(self, to_file=None, pad=True, aug=True):
+    def get_examples(self, to_file=None, ids=None, pad=False, aug=False):
+        if ids is None:
+            ids = list(range(len(self.pid_list)))
+        for i in ids:
+            assert i in range(len(self.pid_list))
         examples = []
-        for i, pid in enumerate(self.pid_list):
-            if i not in self.out_ids:
-                res = self.example_dict[pid]
-                if aug:
-                    res = self._aug(res)
-                if pad:
-                    res = self._pad(res)
-                examples.extend(res)
-        gc.collect()
-        if to_file is not None:
-            self.write_examples(examples, to_file)
-            return len(examples)
-        else:
-            return examples
-
-    def get_valid_examples(self, to_file=None, pad=True):
-        examples = []
-        for oid in self.out_ids:
-            pid = self.pid_list[oid]
+        for i in ids:
+            pid = self.pid_list[i]
             res = self.example_dict[pid]
+            if aug:
+                res = self._aug(res)
             if pad:
                 res = self._pad(res)
             examples.extend(res)
@@ -215,9 +203,6 @@ class EmoPainProcessor(object):
             return len(examples)
         else:
             return examples
-
-    def get_test_examples(self, to_file=None, pad=True):
-        return self.get_valid_examples(to_file, pad)
 
 
 
@@ -384,12 +369,17 @@ def main(FLAG):
 
     tf.gfile.MakeDirs(FLAG.output_dir)
 
-    epp = EmoPainProcessor(FLAG.data_path. FLAG.cv_index)
+    epp = EmoPainProcessor(FLAG.data_path)
 
     n_train_step = None
     if FLAG.do_train:
         train_record_path = os.path.join(FLAG.output_dir, 'train.tfrecord')
-        n_train_example = epp.get_train_examples(train_record_path, FLAG.padding, FLAG.augment)
+        n_train_example = epp.get_examples(
+            to_file=train_record_path,
+            ids=FLAG.train_ids,
+            pad=FLAG.padding,
+            aug=FLAG.augment
+        )
         n_train_step = int(n_train_example/FLAG.train_batch_size*FLAG.n_train_epoch)
         train_input_fn = tf_record_input_fn_builder(
             record_path=train_record_path,
@@ -400,7 +390,12 @@ def main(FLAG):
         )
 
     if FLAG.do_valid:
-        valid_examples = epp.get_valid_examples(pad=FLAG.padding)
+        valid_examples = epp.get_examples(
+            to_file=None,
+            ids=FLAG.valid_ids,
+            pad=FLAG.padding,
+            aug=False
+        )
         valid_input_fn = input_fn_builder(
             examples=valid_examples,
             seq_length=epp.get_max_seq_length(),
@@ -409,7 +404,12 @@ def main(FLAG):
         )
 
     if FLAG.do_test:
-        test_examples = epp.get_test_examples(pad=FLAG.padding)
+        test_examples = epp.get_examples(
+            to_file=None,
+            ids=FLAG.test_ids,
+            pad=FLAG.padding,
+            aug=False
+        )
         test_input_fn = input_fn_builder(
             examples=test_examples,
             seq_length=epp.get_max_seq_length(),
