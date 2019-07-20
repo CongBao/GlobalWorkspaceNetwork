@@ -37,6 +37,7 @@ class Flag(object):
         self.augment = True
         self.learning_rate = 1e-3
         self.n_train_epoch = 30
+        self.n_warmup_step = 5
         self.train_batch_size = 64
         self.valid_batch_size = 16
         self.test_batch_size = 16
@@ -241,7 +242,7 @@ def input_fn_builder(examples, seq_length, batch_size, is_training):
         })
         if is_training:
             d = d.repeat()
-            d = d.shuffle(100)
+            d = d.shuffle(10*batch_size)
         d = d.batch(batch_size)
         return d
 
@@ -271,7 +272,7 @@ def tf_record_input_fn_builder(record_path, pose_feat_size, emg_feat_size, batch
         d = tf.data.TFRecordDataset(record_path)
         if is_training:
             d = d.repeat()
-            d = d.shuffle(100)
+            d = d.shuffle(10*batch_size)
         d = d.map(map_func)
         d = d.batch(batch_size)
         return d
@@ -306,7 +307,34 @@ def create_model(inputs, labels, config, is_training, n_label):
 
 
 
-def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=None):
+def create_optimizer(loss, init_lr, n_train_step, n_warmup_step):
+
+    gs = tf.train.get_or_create_global_step()
+    lr = tf.constant(init_lr, shape=[], dtype=tf.float32)
+
+    lr = tf.train.polynomial_decay(
+        learning_rate=lr,
+        global_step=gs,
+        decay_steps=n_train_step
+    )
+
+    if n_warmup_step > 0:
+        gs_int = tf.cast(gs, tf.int32)
+        ws_int = tf.constant(n_warmup_step, dtype=tf.int32)
+        gs_float = tf.cast(gs_int, tf.float32)
+        ws_float = tf.cast(ws_int, tf.float32)
+        wpd = gs_float / ws_float
+        wlr = init_lr * wpd
+        is_w = tf.cast(gs_int < ws_int, tf.float32)
+        lr = (1.0 - is_w) * lr + is_w * wlr
+
+    op = tf.train.AdamOptimizer(lr).minimize(loss, gs)
+
+    return op
+
+
+
+def model_fn_builder(config, n_label, learning_rate, n_train_step, n_warmup_step):
 
     def model_fn(features, labels, mode, params):
         pose = features['pose']
@@ -323,9 +351,6 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
             n_label=n_label
         )
 
-        if init_ckpt is not None:
-            tf.train.init_from_checkpoint(init_ckpt, {'gwt_model/': 'gwt_model/'})
-
         output_spec = None
 
         if mode == tf.estimator.ModeKeys.TRAIN:
@@ -334,7 +359,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, init_ckpt=Non
             tf.logging.info('***************************')
             for var in tf.trainable_variables():
                 tf.logging.info('  name = {0}, shape= {1}'.format(var.name, var.shape))
-            train_op = tf.train.AdamOptimizer(learning_rate).minimize(loss, global_step=tf.train.get_global_step())
+            train_op = create_optimizer(loss, learning_rate, n_train_step, n_warmup_step)
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
@@ -422,7 +447,7 @@ def main(FLAG):
         n_label=epp.get_n_label(),
         learning_rate=FLAG.learning_rate,
         n_train_step=n_train_step,
-        init_ckpt=FLAG.ckpt_path
+        n_warmup_step=FLAG.n_warmup_step
     )
 
     run_config = tf.estimator.RunConfig(
@@ -433,9 +458,15 @@ def main(FLAG):
         log_step_count_steps=FLAG.log_step_count_steps
     )
 
+    warm_config = tf.estimator.WarmStartSettings(
+        ckpt_to_initialize_from=FLAG.ckpt_path,
+        vars_to_warm_start='gwt_model/*'
+    ) if FLAG.ckpt_path else None
+
     estimator = tf.estimator.Estimator(
         model_fn=model_fn,
-        config=run_config
+        config=run_config,
+        warm_start_from=warm_config
     )
 
     if FLAG.do_train and FLAG.do_valid:
