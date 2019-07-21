@@ -16,6 +16,22 @@ import tensorflow as tf
 
 
 class GWTConfig(object):
+    """
+    Configuration for GWT model.
+
+    Properties:
+    +    gws_size: int, size of global workspace (rnn cell)
+    +   proj_size: int, size of final projection
+    +  inter_size: int, size of intermediate layer
+    + hidden_size: int, size of mapping and attention heads
+    +      n_head: int, number of attention heads
+    +  self_atten: bool, whether apply self-attention or not
+    +  atten_type: str, name of scoring function
+    +   map_activ: str, name of activation function in mapping
+    +  proj_activ: str, name of activation function in projection
+    + inter_activ: str, name of activation function in intermediate layer
+    +   drop_rate: float, rate of dropout
+    """
 
     def __init__(self):
         self.gws_size = 64
@@ -33,6 +49,20 @@ class GWTConfig(object):
 
 
 class GWTModel(object):
+    """
+    Structure of GWT model.
+
+    Arguments:
+    +      inputs: list, a list of input tensors for different modalities
+    +      config: object, an instance of `GWTConfig`
+    + is_training: bool, whether is training or not
+
+    Properties:
+    + mapped_inputs: tensor (B, M, S, H), tensor after mapping
+    +       outputs: tensor (B, S, G), tensor outputed by global workspace
+    +         dists: tensor (B, S, N, [1, M], M), tensor recording attention distributions
+    +   proj_output: tensor (B, P), tensor after projection
+    """
 
     def __init__(self, inputs, config, is_training):
 
@@ -80,6 +110,18 @@ class GWTModel(object):
 
 
 class ConcModel(object):
+    """
+    A baseline concatenation model.
+
+    Arguments:
+    +      inputs: list, a list of input tensors for different modalities
+    +      config: object, an instance of `GWTConfig`
+    + is_training: bool, whether is training or not
+
+    Properties:
+    +     outputs: tensor (B, S, G), tensor outputed by rnn
+    + proj_output: tensor (B, P), tensor after projection
+    """
 
     def __init__(self, inputs, config, is_training):
 
@@ -92,7 +134,7 @@ class ConcModel(object):
                 cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
                 inputs=tf.concat(inputs, axis=-1), # M, (B, S, F) -> (B, S, F*)
                 dtype=tf.float32
-            )
+            ) # (B, S, F*) -> (B, S, G)
             with tf.variable_scope('projection'):
                 self.proj_output = projection(
                     features=self.outputs[:,-1,:],
@@ -110,6 +152,19 @@ class ConcModel(object):
 
 
 class MapConcModel(object):
+    """
+    A baseline cancatenation model with mapping.
+    
+    Arguments:
+    +      inputs: list, a list of input tensors for different modalities
+    +      config: object, an instance of `GWTConfig`
+    + is_training: bool, whether is training or not
+
+    Properties:
+    + mapped_inputs: tensor (B, M, S, H), tensor after mapping
+    +       outputs: tensor (B, S, G), tensor outputed by rnn
+    +   proj_output: tensor (B, P), tensor after projection
+    """
 
     def __init__(self, inputs, config, is_training):
 
@@ -131,7 +186,7 @@ class MapConcModel(object):
                 cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
                 inputs=inputs,
                 dtype=tf.float32
-            )
+            ) # (B, S, M*H) -> (B, S, G)
             with tf.variable_scope('projection'):
                 self.proj_output = projection(
                     features=self.outputs[:,-1,:],
