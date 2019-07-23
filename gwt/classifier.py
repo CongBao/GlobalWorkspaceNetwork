@@ -35,7 +35,9 @@ class Flag(object):
         self.test_ids = None
         self.padding = True
         self.augment = True
+        self.balance = True
         self.learning_rate = 1e-3
+        self.sample_step = 1
         self.n_train_epoch = 30
         self.n_warmup_step = 5
         self.train_batch_size = 64
@@ -68,22 +70,30 @@ class EmoPainExample(object):
 
 class EmoPainProcessor(object):
 
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, sample_step=1):
         data = json.load(open(data_dir, 'r'))
         self.example_dict = {}
+        self.label_dict = {}
         self.max_length = 0
         pid_set = set()
         for pdid, motion_dict in data.items():
             examples = []
             for mid, content in motion_dict.items():
+                uid = '{0}_{1}'.format(pdid, mid)
+                pose = content['pose'][::sample_step]
+                emg = content['emg'][::sample_step]
+                label = self.label_class(content['pain'])
                 examples.append(EmoPainExample(
-                    uid='{0}_{1}'.format(pdid, mid),
-                    pose=np.asarray(content['pose'], dtype=np.float32),
-                    emg=np.asarray(content['emg'], dtype=np.float32),
-                    label=self.label_class(content['pain'])
+                    uid=uid,
+                    pose=np.asarray(pose, dtype=np.float32),
+                    emg=np.asarray(emg, dtype=np.float32),
+                    label=label
                 ))
-                pose_len = len(content['pose'])
-                emg_len = len(content['emg'])
+                if label in self.label_dict.keys():
+                    self.label_dict[label].append(uid)
+                else:
+                    self.label_dict[label] = [uid]
+                pose_len, emg_len = len(pose), len(emg)
                 assert pose_len == emg_len
                 if pose_len >= self.max_length:
                     self.max_length = pose_len
@@ -91,10 +101,10 @@ class EmoPainProcessor(object):
                 continue
             pid = pdid.split('_')[0]
             pid_set.add(pid)
-            if pid not in self.example_dict.keys():
-                self.example_dict[pid] = examples
-            else:
+            if pid in self.example_dict.keys():
                 self.example_dict[pid].extend(examples)
+            else:
+                self.example_dict[pid] = examples
         self.pid_list = list(pid_set)
         self.pid_list.sort()
 
@@ -172,6 +182,11 @@ class EmoPainProcessor(object):
             ro_270.pose = self.rotate(ro_270.pose, -np.pi/2.)
             yield ro_270
 
+    def _bal(self, examples):
+        for example in examples:
+            for _ in range(self.bal_dict[example.uid]):
+                yield example
+
     def get_pose_feat_size(self):
         return self.example_dict[self.pid_list[0]][0].pose.shape[-1]
 
@@ -184,20 +199,34 @@ class EmoPainProcessor(object):
     def get_max_seq_length(self):
         return self.max_length
 
-    def get_examples(self, to_file=None, ids=None, pad=False, aug=False):
+    def get_examples(self, to_file=None, ids=None, pad=False, aug=False, bal=False, shuffle=False):
         if ids is None:
             ids = list(range(len(self.pid_list)))
         for i in ids:
             assert i in range(len(self.pid_list))
+        if bal:
+            max_label = max([len(v) for v in self.label_dict.values()])
+            self.bal_dict = {}
+            for uids in self.label_dict.values():
+                n_rep = max_label // len(uids)
+                n_res = max_label % len(uids)
+                for uid in uids:
+                    self.bal_dict[uid] = n_rep
+                for uid in random.sample(uids, k=n_res):
+                    self.bal_dict[uid] += 1
         examples = []
         for i in ids:
             pid = self.pid_list[i]
             res = self.example_dict[pid]
+            if bal:
+                res = self._bal(res)
             if aug:
                 res = self._aug(res)
             if pad:
                 res = self._pad(res)
             examples.extend(res)
+        if shuffle:
+            random.shuffle(examples)
         gc.collect()
         if to_file is not None:
             self.write_examples(examples, to_file)
@@ -394,7 +423,7 @@ def main(FLAG):
 
     tf.gfile.MakeDirs(FLAG.output_dir)
 
-    epp = EmoPainProcessor(FLAG.data_path)
+    epp = EmoPainProcessor(FLAG.data_path, FLAG.sample_step)
 
     n_train_step = None
     if FLAG.do_train:
@@ -403,7 +432,9 @@ def main(FLAG):
             to_file=train_record_path,
             ids=FLAG.train_ids,
             pad=FLAG.padding,
-            aug=FLAG.augment
+            aug=FLAG.augment,
+            bal=FLAG.balance,
+            shuffle=True
         )
         n_train_step = int(n_train_example/FLAG.train_batch_size*FLAG.n_train_epoch)
         train_input_fn = tf_record_input_fn_builder(
@@ -419,7 +450,9 @@ def main(FLAG):
             to_file=None,
             ids=FLAG.valid_ids,
             pad=FLAG.padding,
-            aug=False
+            aug=False,
+            bal=False,
+            shuffle=False
         )
         valid_input_fn = input_fn_builder(
             examples=valid_examples,
@@ -433,7 +466,9 @@ def main(FLAG):
             to_file=None,
             ids=FLAG.test_ids,
             pad=FLAG.padding,
-            aug=False
+            aug=False,
+            bal=False,
+            shuffle=False
         )
         test_input_fn = input_fn_builder(
             examples=test_examples,
