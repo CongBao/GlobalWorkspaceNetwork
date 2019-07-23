@@ -20,17 +20,17 @@ class GWTConfig(object):
     Configuration for GWT model.
 
     Properties:
-    +    gws_size: int, size of global workspace (rnn cell)
-    +   proj_size: int, size of final projection
-    +  inter_size: int, size of intermediate layer
+    + gws_size: int, size of global workspace (rnn cell)
+    + proj_size: int, size of final projection
+    + inter_size: int, size of intermediate layer
     + hidden_size: int, size of mapping and attention heads
-    +      n_head: int, number of attention heads
-    +  self_atten: bool, whether apply self-attention or not
-    +  atten_type: str, name of scoring function
-    +   map_activ: str, name of activation function in mapping
-    +  proj_activ: str, name of activation function in projection
+    + n_head: int, number of attention heads
+    + self_atten: bool, whether apply self-attention or not
+    + atten_type: str, name of scoring function
+    + map_activ: str, name of activation function in mapping
+    + proj_activ: str, name of activation function in projection
     + inter_activ: str, name of activation function in intermediate layer
-    +   drop_rate: float, rate of dropout
+    + drop_rate: float, rate of dropout
     """
 
     def __init__(self):
@@ -53,15 +53,15 @@ class GWTModel(object):
     Structure of GWT model.
 
     Arguments:
-    +      inputs: list, a list of input tensors for different modalities
-    +      config: object, an instance of `GWTConfig`
+    + inputs: list, a list of input tensors for different modalities
+    + config: object, an instance of `GWTConfig`
     + is_training: bool, whether is training or not
 
     Properties:
     + mapped_inputs: tensor (B, M, S, H), tensor after mapping
-    +       outputs: tensor (B, S, G), tensor outputed by global workspace
-    +         dists: tensor (B, S, N, [1, M], M), tensor recording attention distributions
-    +   proj_output: tensor (B, P), tensor after projection
+    + outputs: tensor (B, S, G), tensor outputed by global workspace
+    + dists: tensor (B, S, N, [1, M], M), tensor recording attention distributions
+    + proj_output: tensor (B, P), tensor after projection
     """
 
     def __init__(self, inputs, config, is_training):
@@ -114,12 +114,12 @@ class ConcModel(object):
     A baseline concatenation model.
 
     Arguments:
-    +      inputs: list, a list of input tensors for different modalities
-    +      config: object, an instance of `GWTConfig`
+    + inputs: list, a list of input tensors for different modalities
+    + config: object, an instance of `GWTConfig`
     + is_training: bool, whether is training or not
 
     Properties:
-    +     outputs: tensor (B, S, G), tensor outputed by rnn
+    + outputs: tensor (B, S, G), tensor outputed by rnn
     + proj_output: tensor (B, P), tensor after projection
     """
 
@@ -156,14 +156,14 @@ class MapConcModel(object):
     A baseline cancatenation model with mapping.
     
     Arguments:
-    +      inputs: list, a list of input tensors for different modalities
-    +      config: object, an instance of `GWTConfig`
+    + inputs: list, a list of input tensors for different modalities
+    + config: object, an instance of `GWTConfig`
     + is_training: bool, whether is training or not
 
     Properties:
     + mapped_inputs: tensor (B, M, S, H), tensor after mapping
-    +       outputs: tensor (B, S, G), tensor outputed by rnn
-    +   proj_output: tensor (B, P), tensor after projection
+    + outputs: tensor (B, S, G), tensor outputed by rnn
+    + proj_output: tensor (B, P), tensor after projection
     """
 
     def __init__(self, inputs, config, is_training):
@@ -226,9 +226,9 @@ def mapping(input_list, units, activ, dropout):
 
     Arguments:
     + input_list: list, a list of input tensors for different modalities
-    +      units: int, size of mapped dimension
-    +      activ: func, activation function
-    +    dropout: float, rate of dropout
+    + units: int, size of mapped dimension
+    + activ: func, activation function
+    + dropout: float, rate of dropout
 
     Return:
     + tensor (B, M, S, H), mapped input tensors
@@ -264,9 +264,9 @@ def projection(features, units, activ, dropout):
 
     Arguments:
     + features: tensor (B, G), attention output
-    +    units: int, size of projected dimension
-    +    activ: func, activation function
-    +  dropout: float, rate of dropout
+    + units: int, size of projected dimension
+    + activ: func, activation function
+    + dropout: float, rate of dropout
 
     Return:
     + tensor (B, P), projected features
@@ -289,14 +289,14 @@ def attention(sbj, obj, n_head, head_size, inter_size, inter_activ, atten_type, 
     The attention function.
 
     Arguments:
-    +         sbj: tensor (B, SL, SF), attention subject
-    +         obj: tensor (B, OL, OF), attention object
-    +      n_head: int, number of attention heads
-    +   head_size: int, size of attention head
-    +  inter_size: int, size of intermediate layer
+    + sbj: tensor (B, SL, SF), attention subject
+    + obj: tensor (B, OL, OF), attention object
+    + n_head: int, number of attention heads
+    + head_size: int, size of attention head
+    + inter_size: int, size of intermediate layer
     + inter_activ: func, activation function in intermediate layer
-    +  atten_type: str, type of attention scoring function
-    +   drop_rate: float, rate of dropout
+    + atten_type: str, type of attention scoring function
+    + drop_rate: float, rate of dropout
 
     Return:
     + tensor (B, M, H), attention output
@@ -405,15 +405,15 @@ def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_acti
     Simulation of global workspace theory.
 
     Arguments:
-    +      inputs: tensor (B, M, S, H), mapped input tensor
-    +    gws_size: int, size of global workspace
-    +      n_head: int, number of attention heads
-    +   head_size: int, size of attention head
-    +  inter_size: int, size of intermediate layer
+    + inputs: tensor (B, M, S, H), mapped input tensor
+    + gws_size: int, size of global workspace
+    + n_head: int, number of attention heads
+    + head_size: int, size of attention head
+    + inter_size: int, size of intermediate layer
     + inter_activ: str, activation function in intermediate layer
-    +  atten_type: str, type of attention scoring function
-    +   drop_rate: float, rate of dropout
-    +  self_atten: bool, whether apply self-attention or not
+    + atten_type: str, type of attention scoring function
+    + drop_rate: float, rate of dropout
+    + self_atten: bool, whether apply self-attention or not
 
     Return:
     + tensor (B, S, G), attention output of whole sequence
@@ -498,7 +498,7 @@ def get_shape(tensor, expected_rank=None):
     Get shape of tensor.
 
     Arguments:
-    +        tensor: tensor, input tensor
+    + tensor: tensor, input tensor
     + expected_rank: list, expected rank of input tensor
 
     Return:
@@ -526,7 +526,7 @@ def assert_rank(tensor, expected_rank):
     Raise an exception if the tensor rank is not of the expected rank.
     
     Arguments:
-    +        tensor: tensor, input tensor
+    + tensor: tensor, input tensor
     + expected_rank: list, expected rank of input tensor
     """
 

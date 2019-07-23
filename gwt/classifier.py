@@ -26,29 +26,29 @@ class Flag(object):
     Running flags.
 
     Properties:
-    +              data_path: str, path of data file
-    +              ckpt_path: str, path of checkpoint file
-    +             output_dir: str, directory of output files
-    +               do_train: bool, whether to do train or not
-    +               do_valid: bool, whether to do validation or not
-    +                do_test: bool, whether to do test or not
-    +              train_ids: list, indexes of train examples
-    +              valid_ids: list, indexes of validation examples
-    +               test_ids: list, indexes of test examples
-    +                padding: bool, whether to pad sequence or not
-    +                augment: bool, whether to augment data or not
-    +                balance: bool, whether to do over-sampling or not
-    +          learning_rate: float, learning rate
-    +            sample_step: int, step of sampling
-    +          n_train_epoch: int, number of epochs to train
-    +          n_warmup_step: int, number of warm up steps
-    +       train_batch_size: int, batch size for training
-    +       valid_batch_size: int, batch size for validation
-    +        test_batch_size: int, batch size for testing
-    +     save_summary_steps: int, number of steps to save summary
+    + data_path: str, path of data file
+    + ckpt_path: str, path of checkpoint file
+    + output_dir: str, directory of output files
+    + do_train: bool, whether to do train or not
+    + do_valid: bool, whether to do validation or not
+    + do_test: bool, whether to do test or not
+    + train_ids: list, indexes of train examples
+    + valid_ids: list, indexes of validation examples
+    + test_ids: list, indexes of test examples
+    + padding: bool, whether to pad sequence or not
+    + augment: bool, whether to augment data or not
+    + balance: bool, whether to do over-sampling or not
+    + learning_rate: float, learning rate
+    + sample_step: int, step of sampling
+    + n_train_epoch: int, number of epochs to train
+    + n_warmup_step: int, number of warm up steps
+    + train_batch_size: int, batch size for training
+    + valid_batch_size: int, batch size for validation
+    + test_batch_size: int, batch size for testing
+    + save_summary_steps: int, number of steps to save summary
     + save_checkpoints_steps: int, number of steps to save checkpoint
-    +    keep_checkpoint_max: int, number of checkpoint files to keep
-    +   log_step_count_steps: int, number of steps to record log messages
+    + keep_checkpoint_max: int, number of checkpoint files to keep
+    + log_step_count_steps: int, number of steps to record log messages
     """
 
     def __init__(self):
@@ -83,9 +83,9 @@ class EmoPainExample(object):
     Data structure of a single EmoPain data example.
 
     Arguments:
-    +   uid: str, the unique id of this example
-    +  pose: ndarray, data of pose modality
-    +   emg: ndarry, data of emg modality
+    + uid: str, the unique id of this example
+    + pose: ndarray, data of pose modality
+    + emg: ndarry, data of emg modality
     + label: int, label of this example
     """
 
@@ -101,7 +101,7 @@ class EmoPainExample(object):
 
         Arguments:
         + pose_deep: whether perform deep copy on pose or not
-        +  emg_deep: whether perform deep copy on emg or not
+        + emg_deep: whether perform deep copy on emg or not
 
         Return:
         + object, a new `EmoPainExample` instance
@@ -121,7 +121,7 @@ class EmoPainProcessor(object):
     Pre-processing EmoPain data examples.
 
     Arguments:
-    +    data_dir: str, directory of json file
+    + data_dir: str, directory of json file
     + sample_step: int, the step of sampling on sequence
     """
 
@@ -217,7 +217,7 @@ class EmoPainProcessor(object):
         Write examples to disk.
 
         Arguments:
-        +    examples: list, example instances
+        + examples: list, example instances
         + output_path: str, the path of saved file
         """
         writer = tf.io.TFRecordWriter(output_path)
@@ -295,10 +295,10 @@ class EmoPainProcessor(object):
 
         Arguments:
         + to_file: str or None, the path to save examples, None for return directly
-        +     ids: list, indexes of examples to load
-        +     pad: bool, whether to pad examples or not
-        +     aug: bool, whether to augment examples or not
-        +     bal: bool, whether to over-sampling on minor examples or not
+        + ids: list, indexes of examples to load
+        + pad: bool, whether to pad examples or not
+        + aug: bool, whether to augment examples or not
+        + bal: bool, whether to over-sampling on minor examples or not
         + shuffle: bool, whether to shuffle the examples or not
 
         Return:
@@ -346,9 +346,9 @@ def input_fn_builder(examples, seq_length, batch_size, is_training):
     Build input function for estimator.
 
     Arguments:
-    +    examples: list, input examples
-    +  seq_length: int, sequence length of examples
-    +  batch_size: int, batch size
+    + examples: list, input examples
+    + seq_length: int, sequence length of examples
+    + batch_size: int, batch size
     + is_training: bool, whether is training or not
 
     Return:
@@ -400,11 +400,11 @@ def tf_record_input_fn_builder(record_path, pose_feat_size, emg_feat_size, batch
     """
     Build input function that load tf record file from disk.
 
-    +    record_path: str, path of tf record file
+    + record_path: str, path of tf record file
     + pose_feat_size: int, feature size of pose data
-    +  emg_feat_size: int, feature size of emg data
-    +     batch_size: int, batch size
-    +    is_training: bool, whether is training or not
+    + emg_feat_size: int, feature size of emg data
+    + batch_size: int, batch size
+    + is_training: bool, whether is training or not
 
     Return:
     + func, input function to be passed to estimator
@@ -444,11 +444,11 @@ def create_model(inputs, labels, config, is_training, n_label):
     Create downstream task model.
 
     Arguments:
-    +      inputs: list, a list of input tensors for different modalities
-    +      labels: list, corresponding labels of inputs
-    +      config: object, instance of `GWTConfig`
+    + inputs: list, a list of input tensors for different modalities
+    + labels: list, corresponding labels of inputs
+    + config: object, instance of `GWTConfig`
     + is_training: bool, whether is training or not
-    +     n_label: int, number of labels
+    + n_label: int, number of labels
 
     Return:
     + tensor (), loss of model
@@ -486,9 +486,9 @@ def create_optimizer(loss, init_lr, n_train_step, n_warmup_step):
     Create train op for estimator.
 
     Arguments:
-    +          loss: tensor (), loss of downstream model
-    +       init_lr: float, initial learning rate
-    +  n_train_step: int, number of total training steps
+    + loss: tensor (), loss of downstream model
+    + init_lr: float, initial learning rate
+    + n_train_step: int, number of total training steps
     + n_warmup_step: int, number of warm up steps
 
     Return:
@@ -525,11 +525,11 @@ def model_fn_builder(config, n_label, lr, n_train_step, n_warmup_step):
     Build model function for estimator.
 
     Arguments:
-    +         config: object, instance of `GWTConfig`
-    +        n_label: int, number of labels
-    +             lr: float, learning rate
+    + config: object, instance of `GWTConfig`
+    + n_label: int, number of labels
+    + lr: float, learning rate
     + n_trainig_step: number of training steps
-    +  n_warmup_step: number of warmup steps
+    + n_warmup_step: number of warmup steps
 
     Return:
     + func, model function to be passed to estimator
