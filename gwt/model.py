@@ -220,7 +220,19 @@ class MapConcModel(object):
 # SL = subject tensor sequence length
 # OL = object tensor sequence length
 
-def mapping(input_list, units, activ=None, dropout=0.0):
+def mapping(input_list, units, activ, dropout):
+    """
+    Map input tensors to same dimension.
+
+    Arguments:
+    + input_list: list, a list of input tensors for different modalities
+    +      units: int, size of mapped dimension
+    +      activ: func, activation function
+    +    dropout: float, rate of dropout
+
+    Return:
+    + tensor (B, M, S, H), mapped input tensors
+    """
 
     n_modality = len(input_list) # M
 
@@ -246,7 +258,19 @@ def mapping(input_list, units, activ=None, dropout=0.0):
 
 
 
-def projection(features, units, activ=None, dropout=0.0):
+def projection(features, units, activ, dropout):
+    """
+    Project attention output to downstream task.
+
+    Arguments:
+    + features: tensor (B, G), attention output
+    +    units: int, size of projected dimension
+    +    activ: func, activation function
+    +  dropout: float, rate of dropout
+
+    Return:
+    + tensor (B, P), projected features
+    """
     
     assert_rank(features, 2) # (B, G)
 
@@ -261,6 +285,23 @@ def projection(features, units, activ=None, dropout=0.0):
 
 
 def attention(sbj, obj, n_head, head_size, inter_size, inter_activ, atten_type, drop_rate):
+    """
+    The attention function.
+
+    Arguments:
+    +         sbj: tensor (B, SL, SF), attention subject
+    +         obj: tensor (B, OL, OF), attention object
+    +      n_head: int, number of attention heads
+    +   head_size: int, size of attention head
+    +  inter_size: int, size of intermediate layer
+    + inter_activ: func, activation function in intermediate layer
+    +  atten_type: str, type of attention scoring function
+    +   drop_rate: float, rate of dropout
+
+    Return:
+    + tensor (B, M, H), attention output
+    + tensor (B, N, [1, M], M), attention distribution
+    """
 
     sbj_shape = get_shape(sbj, expected_rank=3) # (B, SL, SF) : (B, 1, G) or (B, M, H)
     obj_shape = get_shape(obj, expected_rank=3) # (B, OL, OF) : (B, M, H)
@@ -360,13 +401,30 @@ def attention(sbj, obj, n_head, head_size, inter_size, inter_activ, atten_type, 
 
 
 def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_activ, atten_type, drop_rate, self_atten):
+    """
+    Simulation of global workspace theory.
+
+    Arguments:
+    +      inputs: tensor (B, M, S, H), mapped input tensor
+    +    gws_size: int, size of global workspace
+    +      n_head: int, number of attention heads
+    +   head_size: int, size of attention head
+    +  inter_size: int, size of intermediate layer
+    + inter_activ: str, activation function in intermediate layer
+    +  atten_type: str, type of attention scoring function
+    +   drop_rate: float, rate of dropout
+    +  self_atten: bool, whether apply self-attention or not
+
+    Return:
+    + tensor (B, S, G), attention output of whole sequence
+    + tensor (B, S, N, [1, M], M), attention distribution of whole sequence
+    """
 
     input_shape = get_shape(inputs, expected_rank=4) # (B, M, S, H)
 
     batch_size = input_shape[0] # B
     n_modality = input_shape[1] # M
     seq_length = input_shape[2] # S
-    feat_units = input_shape[3] # H
 
     inputs = tf.transpose(inputs, [2, 0, 1, 3]) # (S, B, M, H)
     inputs_ta = tf.TensorArray(dtype=tf.float32, size=seq_length) # S, (B, M, H)
@@ -413,6 +471,16 @@ def global_workspace(inputs, gws_size, n_head, head_size, inter_size, inter_acti
 
 
 def get_activ_fn(activ_str):
+    """
+    Get the activation function.
+
+    Arguments:
+    + activ_str: str, name of activation function
+
+    Return:
+    + func, activation function
+    """
+
     if not isinstance(activ_str, six.string_types):
         return activ_str
     if not activ_str:
@@ -425,11 +493,20 @@ def get_activ_fn(activ_str):
 
 
 
-def get_shape(tensor, expected_rank=None, name=None):
-    if name is None:
-        name = tensor.name
+def get_shape(tensor, expected_rank=None):
+    """
+    Get shape of tensor.
+
+    Arguments:
+    +        tensor: tensor, input tensor
+    + expected_rank: list, expected rank of input tensor
+
+    Return:
+    + list, shape of the input tensor
+    """
+
     if expected_rank is not None:
-        assert_rank(tensor, expected_rank, name)
+        assert_rank(tensor, expected_rank)
     shape = tensor.shape.as_list()
     non_static_indexes = []
     for idx, dim in enumerate(shape):
@@ -444,9 +521,15 @@ def get_shape(tensor, expected_rank=None, name=None):
 
 
 
-def assert_rank(tensor, expected_rank, name=None):
-    if name is None:
-        name = tensor.name
+def assert_rank(tensor, expected_rank):
+    """
+    Raise an exception if the tensor rank is not of the expected rank.
+    
+    Arguments:
+    +        tensor: tensor, input tensor
+    + expected_rank: list, expected rank of input tensor
+    """
+
     expected_rank_dict = {}
     if isinstance(expected_rank, six.integer_types):
         expected_rank_dict[expected_rank] = True
@@ -455,6 +538,7 @@ def assert_rank(tensor, expected_rank, name=None):
             expected_rank_dict[x] = True
     actual_rank = tensor.shape.ndims
     if actual_rank not in expected_rank_dict:
+        name = tensor.name
         scope_name = tf.get_variable_scope().name
         raise ValueError(
             "For the tensor `%s` in scope `%s`, the actual rank "
