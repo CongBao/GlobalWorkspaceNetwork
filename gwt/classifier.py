@@ -22,6 +22,34 @@ import model
 
 
 class Flag(object):
+    """
+    Running flags.
+
+    Properties:
+    +              data_path: str, path of data file
+    +              ckpt_path: str, path of checkpoint file
+    +             output_dir: str, directory of output files
+    +               do_train: bool, whether to do train or not
+    +               do_valid: bool, whether to do validation or not
+    +                do_test: bool, whether to do test or not
+    +              train_ids: list, indexes of train examples
+    +              valid_ids: list, indexes of validation examples
+    +               test_ids: list, indexes of test examples
+    +                padding: bool, whether to pad sequence or not
+    +                augment: bool, whether to augment data or not
+    +                balance: bool, whether to do over-sampling or not
+    +          learning_rate: float, learning rate
+    +            sample_step: int, step of sampling
+    +          n_train_epoch: int, number of epochs to train
+    +          n_warmup_step: int, number of warm up steps
+    +       train_batch_size: int, batch size for training
+    +       valid_batch_size: int, batch size for validation
+    +        test_batch_size: int, batch size for testing
+    +     save_summary_steps: int, number of steps to save summary
+    + save_checkpoints_steps: int, number of steps to save checkpoint
+    +    keep_checkpoint_max: int, number of checkpoint files to keep
+    +   log_step_count_steps: int, number of steps to record log messages
+    """
 
     def __init__(self):
         self.data_path = None
@@ -51,6 +79,15 @@ class Flag(object):
 
 
 class EmoPainExample(object):
+    """
+    Data structure of a single EmoPain data example.
+
+    Arguments:
+    +   uid: str, the unique id of this example
+    +  pose: ndarray, data of pose modality
+    +   emg: ndarry, data of emg modality
+    + label: int, label of this example
+    """
 
     def __init__(self, uid, pose, emg, label):
         self.uid = uid
@@ -59,6 +96,17 @@ class EmoPainExample(object):
         self.label = label
 
     def copy(self, pose_deep=False, emg_deep=False):
+        """
+        Return a copy of this example.
+
+        Arguments:
+        + pose_deep: whether perform deep copy on pose or not
+        +  emg_deep: whether perform deep copy on emg or not
+
+        Return:
+        + object, a new `EmoPainExample` instance
+        """
+
         return EmoPainExample(
             uid=self.uid,
             pose=self.pose.copy() if pose_deep else self.pose,
@@ -69,6 +117,13 @@ class EmoPainExample(object):
 
 
 class EmoPainProcessor(object):
+    """
+    Pre-processing EmoPain data examples.
+
+    Arguments:
+    +    data_dir: str, directory of json file
+    + sample_step: int, the step of sampling on sequence
+    """
 
     def __init__(self, data_dir, sample_step=1):
         data = json.load(open(data_dir, 'r'))
@@ -110,6 +165,15 @@ class EmoPainProcessor(object):
 
     @staticmethod
     def label_class(num):
+        """
+        Convert label values to classes.
+
+        Arguments:
+        + num: float, the true label value
+
+        Return:
+        + int, index of class
+        """
         if num == 0.0:
             return 0
         else:
@@ -117,10 +181,26 @@ class EmoPainProcessor(object):
 
     @staticmethod
     def get_n_label():
+        """
+        Get number of labels.
+
+        Return:
+        + int, number of labels
+        """
         return 2
 
     @staticmethod
     def rotate(seq, rad):
+        """
+        Rotate pose data in 3D space.
+
+        Arguments:
+        + seq: ndarray, the input sequence
+        + rad: float, angle to rotate in radians
+
+        Return:
+        + ndarray, sequence after rotation
+        """
         rm = np.array([
             [np.cos(rad),  0., np.sin(rad)],
             [0.,           1.,          0.],
@@ -133,6 +213,13 @@ class EmoPainProcessor(object):
 
     @staticmethod
     def write_examples(examples, output_path):
+        """
+        Write examples to disk.
+
+        Arguments:
+        +    examples: list, example instances
+        + output_path: str, the path of saved file
+        """
         writer = tf.io.TFRecordWriter(output_path)
         for example in examples:
             features = collections.OrderedDict()
@@ -153,6 +240,7 @@ class EmoPainProcessor(object):
         writer.close()
 
     def _pad(self, examples):
+        """ Pad the examples. """
         for example in examples:
             pose_shape = example.pose.shape
             emg_shape = example.emg.shape
@@ -165,6 +253,7 @@ class EmoPainProcessor(object):
             yield example
 
     def _aug(self, examples):
+        """ Augment the examples """
         for example in examples:
             raw = example.copy()
             raw.uid += '_o'
@@ -183,6 +272,7 @@ class EmoPainProcessor(object):
             yield ro_270
 
     def _bal(self, examples):
+        """ Balance the examples """
         for example in examples:
             for _ in range(self.bal_dict[example.uid]):
                 yield example
@@ -200,6 +290,21 @@ class EmoPainProcessor(object):
         return self.max_length
 
     def get_examples(self, to_file=None, ids=None, pad=False, aug=False, bal=False, shuffle=False):
+        """
+        Get a list of examples.
+
+        Arguments:
+        + to_file: str or None, the path to save examples, None for return directly
+        +     ids: list, indexes of examples to load
+        +     pad: bool, whether to pad examples or not
+        +     aug: bool, whether to augment examples or not
+        +     bal: bool, whether to over-sampling on minor examples or not
+        + shuffle: bool, whether to shuffle the examples or not
+
+        Return:
+        + list or int, if to_file=None, return a list of examples,
+            otherwise return the number of examples
+        """
         if ids is None:
             ids = list(range(len(self.pid_list)))
         for i in ids:
@@ -237,6 +342,18 @@ class EmoPainProcessor(object):
 
 
 def input_fn_builder(examples, seq_length, batch_size, is_training):
+    """
+    Build input function for estimator.
+
+    Arguments:
+    +    examples: list, input examples
+    +  seq_length: int, sequence length of examples
+    +  batch_size: int, batch size
+    + is_training: bool, whether is training or not
+
+    Return:
+    + func, input function to be passed to estimator
+    """
 
     pose_feat_size = examples[0].pose.shape[1]
     emg_feat_size = examples[0].emg.shape[1]
@@ -280,6 +397,18 @@ def input_fn_builder(examples, seq_length, batch_size, is_training):
 
 
 def tf_record_input_fn_builder(record_path, pose_feat_size, emg_feat_size, batch_size, is_training):
+    """
+    Build input function that load tf record file from disk.
+
+    +    record_path: str, path of tf record file
+    + pose_feat_size: int, feature size of pose data
+    +  emg_feat_size: int, feature size of emg data
+    +     batch_size: int, batch size
+    +    is_training: bool, whether is training or not
+
+    Return:
+    + func, input function to be passed to estimator
+    """
 
     context_feat = {
         'label': tf.FixedLenFeature([], tf.int64)
@@ -311,6 +440,22 @@ def tf_record_input_fn_builder(record_path, pose_feat_size, emg_feat_size, batch
 
 
 def create_model(inputs, labels, config, is_training, n_label):
+    """
+    Create downstream task model.
+
+    Arguments:
+    +      inputs: list, a list of input tensors for different modalities
+    +      labels: list, corresponding labels of inputs
+    +      config: object, instance of `GWTConfig`
+    + is_training: bool, whether is training or not
+    +     n_label: int, number of labels
+
+    Return:
+    + tensor (), loss of model
+    + tensor (B,), loss of each example
+    + tensor (B, L), log probability
+    + tensor (S, B, N, [1, M], M), attention distributions
+    """
     
     gwt_model = model.GWTModel(
         inputs=inputs,
@@ -337,6 +482,18 @@ def create_model(inputs, labels, config, is_training, n_label):
 
 
 def create_optimizer(loss, init_lr, n_train_step, n_warmup_step):
+    """
+    Create train op for estimator.
+
+    Arguments:
+    +          loss: tensor (), loss of downstream model
+    +       init_lr: float, initial learning rate
+    +  n_train_step: int, number of total training steps
+    + n_warmup_step: int, number of warm up steps
+
+    Return:
+    + object, train op
+    """
 
     gs = tf.train.get_or_create_global_step()
     lr = tf.constant(init_lr, shape=[], dtype=tf.float32)
@@ -363,7 +520,20 @@ def create_optimizer(loss, init_lr, n_train_step, n_warmup_step):
 
 
 
-def model_fn_builder(config, n_label, learning_rate, n_train_step, n_warmup_step):
+def model_fn_builder(config, n_label, lr, n_train_step, n_warmup_step):
+    """
+    Build model function for estimator.
+
+    Arguments:
+    +         config: object, instance of `GWTConfig`
+    +        n_label: int, number of labels
+    +             lr: float, learning rate
+    + n_trainig_step: number of training steps
+    +  n_warmup_step: number of warmup steps
+
+    Return:
+    + func, model function to be passed to estimator
+    """
 
     def model_fn(features, labels, mode, params):
         pose = features['pose']
@@ -388,7 +558,7 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, n_warmup_step
             tf.logging.info('***************************')
             for var in tf.trainable_variables():
                 tf.logging.info('  name = {0}, shape= {1}'.format(var.name, var.shape))
-            train_op = create_optimizer(loss, learning_rate, n_train_step, n_warmup_step)
+            train_op = create_optimizer(loss, lr, n_train_step, n_warmup_step)
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
@@ -418,6 +588,12 @@ def model_fn_builder(config, n_label, learning_rate, n_train_step, n_warmup_step
 
 
 def main(FLAG):
+    """
+    Main procedure.
+
+    Arguments:
+    + FLAG: object, instance of `Flag`
+    """
 
     tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -480,7 +656,7 @@ def main(FLAG):
     model_fn = model_fn_builder(
         config=model.GWTConfig(),
         n_label=epp.get_n_label(),
-        learning_rate=FLAG.learning_rate,
+        lr=FLAG.learning_rate,
         n_train_step=n_train_step,
         n_warmup_step=FLAG.n_warmup_step
     )
