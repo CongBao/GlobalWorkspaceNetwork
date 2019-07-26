@@ -121,7 +121,7 @@ class Analysis(object):
 
 
 
-def loso_cv(res_dir=None, n_label=3):
+def cv_result(res_dir=None, n_label=3):
     label_list = []
     pred_list = []
     for f in os.listdir(res_dir):
@@ -135,15 +135,33 @@ def loso_cv(res_dir=None, n_label=3):
 
 
 
-def ttest_losocv(res1_dir=None, res2_dir=None, n_label=3):
+def ttest_losocv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
     is_json = lambda x: x.endswith('.json')
     files1 = list(filter(is_json, os.listdir(res1_dir)))
     files2 = list(filter(is_json, os.listdir(res2_dir)))
     assert len(files1) == len(files2)
 
+    diff = []
+    for f1, f2 in zip(sorted(files1), sorted(files2)):
+        path1 = os.path.join(res1_dir, f1)
+        path2 = os.path.join(res2_dir, f2)
+        res1 = json.load(open(path1, 'r'))
+        res2 = json.load(open(path2, 'r'))
+        lab1 = [it['label'] for it in res1.values()]
+        lab2 = [it['label'] for it in res2.values()]
+        pred1 = [it['pred'] for it in res1.values()]
+        pred2 = [it['pred'] for it in res2.values()]
+        score1 = metric(lab1, pred1)
+        score2 = metric(lab2, pred2)
+        diff.append(score1 - score2)
+    p_bar = np.mean(diff)
+    sqr_diff = np.square(np.array(diff) - p_bar)
+    t = p_bar*np.sqrt(len(files1)-1)/np.sqrt(np.sum(sqr_diff)/(len(files1-1)))
+    return t
 
 
-def ttest_52cv(res1_dir=None, res2_dir=None, n_label=3, metric=metrics.accuracy_score):
+
+def ttest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
     is_json = lambda x: x.endswith('.json')
     files1 = list(filter(is_json, os.listdir(res1_dir)))
     files2 = list(filter(is_json, os.listdir(res2_dir)))
@@ -169,7 +187,7 @@ def ttest_52cv(res1_dir=None, res2_dir=None, n_label=3, metric=metrics.accuracy_
         assert nf1 == nf2
         diff[int(nt1), int(nf1)] = score1 - score2
 
-    p_i_bar = np.mean(diff, axis=1)
+    p_i_bar = np.mean(diff, axis=1, keepdims=True)
     s_i_sqr = np.sum(np.square(diff - p_i_bar), axis=1)
     t = diff[0, 0] / np.sqrt(np.mean(s_i_sqr))
     return t
