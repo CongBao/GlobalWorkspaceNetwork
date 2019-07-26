@@ -156,7 +156,7 @@ def ttest_losocv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
         diff.append(score1 - score2)
     p_bar = np.mean(diff)
     sqr_diff = np.square(np.array(diff) - p_bar)
-    t = p_bar*np.sqrt(len(files1)-1)/np.sqrt(np.sum(sqr_diff)/(len(files1-1)))
+    t = p_bar*np.sqrt(len(files1))/np.sqrt(np.sum(sqr_diff)/(len(files1)-1))
     return t
 
 
