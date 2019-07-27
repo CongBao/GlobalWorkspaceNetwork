@@ -13,6 +13,7 @@ import emoji
 import numpy as np
 import matplotlib.pyplot as plt
 
+from scipy import stats
 from sklearn import metrics
 
 
@@ -121,79 +122,6 @@ class Analysis(object):
 
 
 
-def cv_result(res_dir=None, n_label=3):
-    label_list = []
-    pred_list = []
-    for f in os.listdir(res_dir):
-        if f.endswith('.json'):
-            path = os.path.join(res_dir, f)
-            res = json.load(open(path, 'r'))
-            for item in res.values():
-                label_list.append(item['label'])
-                pred_list.append(item['pred'])
-    metric_report(label_list, pred_list, n_label)
-
-
-
-def ttest_losocv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
-    is_json = lambda x: x.endswith('.json')
-    files1 = list(filter(is_json, os.listdir(res1_dir)))
-    files2 = list(filter(is_json, os.listdir(res2_dir)))
-    assert len(files1) == len(files2)
-
-    diff = []
-    for f1, f2 in zip(sorted(files1), sorted(files2)):
-        path1 = os.path.join(res1_dir, f1)
-        path2 = os.path.join(res2_dir, f2)
-        res1 = json.load(open(path1, 'r'))
-        res2 = json.load(open(path2, 'r'))
-        lab1 = [it['label'] for it in res1.values()]
-        lab2 = [it['label'] for it in res2.values()]
-        pred1 = [it['pred'] for it in res1.values()]
-        pred2 = [it['pred'] for it in res2.values()]
-        score1 = metric(lab1, pred1)
-        score2 = metric(lab2, pred2)
-        diff.append(score1 - score2)
-    p_bar = np.mean(diff)
-    sqr_diff = np.square(np.array(diff) - p_bar)
-    t = p_bar*np.sqrt(len(files1))/np.sqrt(np.sum(sqr_diff)/(len(files1)-1))
-    return t
-
-
-
-def ttest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
-    is_json = lambda x: x.endswith('.json')
-    files1 = list(filter(is_json, os.listdir(res1_dir)))
-    files2 = list(filter(is_json, os.listdir(res2_dir)))
-    assert len(files1) == len(files2)
-
-    diff = np.zeros((5, 2))
-    for f1, f2 in zip(sorted(files1), sorted(files2)):
-        path1 = os.path.join(res1_dir, f1)
-        path2 = os.path.join(res2_dir, f2)
-        res1 = json.load(open(path1, 'r'))
-        res2 = json.load(open(path2, 'r'))
-        lab1 = [it['label'] for it in res1.values()]
-        lab2 = [it['label'] for it in res2.values()]
-        pred1 = [it['pred'] for it in res1.values()]
-        pred2 = [it['pred'] for it in res2.values()]
-        score1 = metric(lab1, pred1)
-        score2 = metric(lab2, pred2)
-        name1 = f1.replace('.json', '')
-        name2 = f2.replace('.json', '')
-        _, nt1, nf1 = name1.split('_')
-        _, nt2, nf2 = name2.split('_')
-        assert nt1 == nt2
-        assert nf1 == nf2
-        diff[int(nt1), int(nf1)] = score1 - score2
-
-    p_i_bar = np.mean(diff, axis=1, keepdims=True)
-    s_i_sqr = np.sum(np.square(diff - p_i_bar), axis=1)
-    t = diff[0, 0] / np.sqrt(np.mean(s_i_sqr))
-    return t
-
-
-
 def metric_report(label_list, pred_list, n_label):
     cm = metrics.confusion_matrix(label_list, pred_list, labels=np.arange(n_label))
     accuracy = np.trace(cm) / np.sum(cm)
@@ -229,4 +157,116 @@ def metric_report(label_list, pred_list, n_label):
     plt.ylabel('Label', fontsize=15)
     plt.xlabel('Prediction', fontsize=15)
     plt.show()
+
+
+
+def cv_result(res_dir=None, n_label=3):
+    label_list = []
+    pred_list = []
+    for f in os.listdir(res_dir):
+        if f.endswith('.json'):
+            path = os.path.join(res_dir, f)
+            res = json.load(open(path, 'r'))
+            for item in res.values():
+                label_list.append(item['label'])
+                pred_list.append(item['pred'])
+    metric_report(label_list, pred_list, n_label)
+
+
+
+def ttest_losocv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
+    is_json = lambda x: x.endswith('.json')
+    files1 = list(filter(is_json, os.listdir(res1_dir)))
+    files2 = list(filter(is_json, os.listdir(res2_dir)))
+    assert len(files1) == len(files2)
+
+    scores1, scores2 = [], []
+    for f1, f2 in zip(sorted(files1), sorted(files2)):
+        path1 = os.path.join(res1_dir, f1)
+        path2 = os.path.join(res2_dir, f2)
+        res1 = json.load(open(path1, 'r'))
+        res2 = json.load(open(path2, 'r'))
+        lab1 = [it['label'] for it in res1.values()]
+        lab2 = [it['label'] for it in res2.values()]
+        pred1 = [it['pred'] for it in res1.values()]
+        pred2 = [it['pred'] for it in res2.values()]
+        scores1.append(metric(lab1, pred1))
+        scores2.append(metric(lab2, pred2))
+
+    diff = np.array(scores1) - np.array(scores2)
+    _, p_norm = stats.shapiro(diff)
+    if p_norm < 0.05:
+        t, p = stats.wilcoxon(scores1, scores2)
+        print('Wilcoxon signed-rank test, statistic={0}, p-value={1}'.format(t, p))
+    else:
+        t, p = stats.ttest_rel(scores1, scores2)
+        print('Paired t-test, statistic={0}, p-value={1}'.format(t, p))
+
+
+
+def ftest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
+    is_json = lambda x: x.endswith('.json')
+    files1 = list(filter(is_json, os.listdir(res1_dir)))
+    files2 = list(filter(is_json, os.listdir(res2_dir)))
+    assert len(files1) == len(files2)
+
+    diff = np.zeros((5, 2))
+    for f1, f2 in zip(sorted(files1), sorted(files2)):
+        path1 = os.path.join(res1_dir, f1)
+        path2 = os.path.join(res2_dir, f2)
+        res1 = json.load(open(path1, 'r'))
+        res2 = json.load(open(path2, 'r'))
+        lab1 = [it['label'] for it in res1.values()]
+        lab2 = [it['label'] for it in res2.values()]
+        pred1 = [it['pred'] for it in res1.values()]
+        pred2 = [it['pred'] for it in res2.values()]
+        score1 = metric(lab1, pred1)
+        score2 = metric(lab2, pred2)
+        name1 = f1.replace('.json', '')
+        name2 = f2.replace('.json', '')
+        _, nt1, nf1 = name1.split('_')
+        _, nt2, nf2 = name2.split('_')
+        assert nt1 == nt2
+        assert nf1 == nf2
+        diff[int(nt1), int(nf1)] = score1 - score2
+
+    p_i_bar = np.mean(diff, axis=1, keepdims=True)
+    s_i_sqr = np.sum(np.square(diff - p_i_bar), axis=1)
+    f = np.sum(np.square(diff)) / (2*np.sum(s_i_sqr))
+    p = stats.f.sf(f, 10, 5)
+    print('F test, statistic={0}, p-value={1}'.format(f, p))
+
+
+
+def ttest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
+    is_json = lambda x: x.endswith('.json')
+    files1 = list(filter(is_json, os.listdir(res1_dir)))
+    files2 = list(filter(is_json, os.listdir(res2_dir)))
+    assert len(files1) == len(files2)
+
+    diff = np.zeros((5, 2))
+    for f1, f2 in zip(sorted(files1), sorted(files2)):
+        path1 = os.path.join(res1_dir, f1)
+        path2 = os.path.join(res2_dir, f2)
+        res1 = json.load(open(path1, 'r'))
+        res2 = json.load(open(path2, 'r'))
+        lab1 = [it['label'] for it in res1.values()]
+        lab2 = [it['label'] for it in res2.values()]
+        pred1 = [it['pred'] for it in res1.values()]
+        pred2 = [it['pred'] for it in res2.values()]
+        score1 = metric(lab1, pred1)
+        score2 = metric(lab2, pred2)
+        name1 = f1.replace('.json', '')
+        name2 = f2.replace('.json', '')
+        _, nt1, nf1 = name1.split('_')
+        _, nt2, nf2 = name2.split('_')
+        assert nt1 == nt2
+        assert nf1 == nf2
+        diff[int(nt1), int(nf1)] = score1 - score2
+
+    p_i_bar = np.mean(diff, axis=1, keepdims=True)
+    s_i_sqr = np.sum(np.square(diff - p_i_bar), axis=1)
+    t = diff[0, 0] / np.sqrt(np.mean(s_i_sqr))
+    p = stats.t.sf(t, 5)*2
+    print('T-test, statistic={0}, p-value={1}'.format(t, p))
     
