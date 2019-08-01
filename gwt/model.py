@@ -151,9 +151,9 @@ class ConcModel(object):
 
 
 
-class MapConcModel(object):
+class AttenRmModel(object):
     """
-    A baseline cancatenation model with mapping.
+    A baseline cancatenation model without attention.
     
     Arguments:
     + inputs: list, a list of input tensors for different modalities
@@ -172,7 +172,7 @@ class MapConcModel(object):
         if not is_training:
             config.drop_rate = 0.0
 
-        with tf.variable_scope('map_conc_model'):
+        with tf.variable_scope('atten_rm_model'):
             with tf.variable_scope('mapping'): # input -> dense (sequence)
                 self.mapped_inputs = mapping(
                     input_list=inputs,
@@ -181,10 +181,21 @@ class MapConcModel(object):
                     dropout=config.drop_rate
                 ) # M, (B, S, F) -> (B, M, S, H)
             input_list = tf.unstack(self.mapped_inputs, axis=1) # (B, M, S, H) -> M, (B, S, H)
-            inputs = tf.concat(input_list, axis=-1) # M, (B, S, H) -> (B, S, M*H)
+            mapped = tf.concat(input_list, axis=-1) # M, (B, S, H) -> (B, S, M*H)
+            with tf.variable_scope('intermediate'):
+                inter = tf.keras.layers.TimeDistributed(
+                    tf.keras.layers.Dense(
+                        units=config.inter_size,
+                        activation=get_activ_fn(config.inter_activ)
+                    ),
+                )(mapped) # (B, S, M*H) -> (B, S, I)
+                inter = tf.keras.layers.TimeDistributed(
+                    tf.keras.layers.Dense(len(inputs)*config.hidden_size)
+                )(inter) # (B, S, I) -> (B, S, M*H)
+                mapped = tf.contrib.layers.layer_norm(inter + mapped, begin_norm_axis=-1)
             self.outputs, _ = tf.nn.dynamic_rnn(
                 cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
-                inputs=inputs,
+                inputs=mapped,
                 dtype=tf.float32
             ) # (B, S, M*H) -> (B, S, G)
             with tf.variable_scope('projection'):
