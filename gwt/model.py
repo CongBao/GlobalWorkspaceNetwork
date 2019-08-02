@@ -41,7 +41,7 @@ class GWTConfig(object):
         self.n_head = 2
         self.self_atten = True
         self.atten_type = 'general'
-        self.map_activ = None
+        self.map_activ = 'gelu'
         self.proj_activ = 'tanh'
         self.inter_activ = 'gelu'
         self.drop_rate = 0.1
@@ -258,7 +258,16 @@ def mapping(input_list, units, activ, dropout):
         ) # (B, S, F)
         feats = tf.keras.layers.TimeDistributed(
             layer=tf.keras.layers.Dense(units, activation=activ),
-            name='map_{}'.format(idx)
+            name='map_hidden_{}'.format(idx)
+        )(feats) # (B, S, H)
+        feats = tf.nn.dropout(
+            x=feats,
+            rate=dropout,
+            noise_shape=(feat_shape[0], 1, units)
+        ) # (B, S, H)
+        feats = tf.keras.layers.TimeDistributed(
+            layer=tf.keras.layers.Dense(units),
+            name='map_out_{}'.format(idx)
         )(feats) # (B, S, H)
         mapped.append(feats)
 
