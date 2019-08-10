@@ -48,6 +48,60 @@ class GWTConfig(object):
 
 
 
+class MappingPretrain(object):
+
+    def __init__(self, inputs, config, is_training):
+
+        config = copy.deepcopy(config)
+        if not is_training:
+            config.drop_rate = 0.0
+
+        with tf.variable_scope('gwt_model'):
+            with tf.variable_scope('mapping'):
+                self.mapped_inputs = mapping(
+                    input_list=inputs,
+                    units=config.hidden_size,
+                    activ=get_activ_fn(config.map_activ),
+                    dropout=config.drop_rate
+                ) # M, (B, S, F) -> (B, M, S, H)
+        with tf.variable_scope('pretrain'):
+            cs = tf.keras.layers.add(
+                tf.unstack(self.mapped_inputs, axis=1)
+            ) # (B, S, H)
+            n_modality = len(inputs)
+            recon = []
+            for idx in range(n_modality):
+                ipt_shape = get_shape(inputs[idx], expected_rank=3)
+                feats = tf.nn.dropout(
+                    x=cs,
+                    rate=config.drop_rate,
+                    noise_shape=(ipt_shape[0], 1, config.hidden_size)
+                ) # (B, S, H)
+                feats = tf.keras.layers.TimeDistributed(
+                    layer=tf.keras.layers.Dense(
+                        units=config.hidden_size,
+                        activation=get_activ_fn(config.map_activ)),
+                    name='map_hidden_{}'.format(idx)
+                )(feats) # (B, S, H)
+                feats = tf.nn.dropout(
+                    x=feats,
+                    rate=config.drop_rate,
+                    noise_shape=(ipt_shape[0], 1, config.hidden_size)
+                ) # (B, S, H)
+                feats = tf.keras.layers.TimeDistributed(
+                    layer=tf.keras.layers.Dense(ipt_shape[-1]),
+                    name='map_out_{}'.format(idx)
+                )(feats) # (B, S, F)
+                recon.append(feats)
+            loss1 = tf.losses.mean_squared_error(inputs[0], recon[0])
+            loss2 = tf.losses.mean_squared_error(inputs[1], recon[1])
+            self.loss = tf.reduce_mean(loss1 + loss2)
+
+    def get_loss(self):
+        return self.loss
+
+
+
 class GWTModel(object):
     """
     Structure of GWT model.
