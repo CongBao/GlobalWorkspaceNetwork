@@ -7,6 +7,7 @@ from __future__ import absolute_import
 
 import os
 import json
+import math
 import itertools
 
 import emoji
@@ -47,33 +48,31 @@ class Analysis(object):
         for uid, item in self.res.items():
             self.title(uid, item['label'], item['pred'], '\n')
             dist = np.asarray(item['dist'], dtype=np.float32)
+            start = np.argmin(np.all(np.absolute(dist-0.5)<1e-3, axis=(1,2,3)))
+            end = len(dist)
+            length = end-start
+            gap = int(0.1*length)
             _, hs, ss, os = dist.shape
             _, axes = plt.subplots(hs, ss, figsize=[ss*9, hs*3.5])
-            if hs == 1:
-                if ss == 1:
-                    axes.plot(dist[:,0,0,:])
-                    axes.set_ylim(0, 1)
-                    axes.set_title('Head 0')
-                    axes.legend(['M{}'.format(i) for i in range(os)])
-                    continue
-                for s in range(ss):
-                    axes[s].plot(dist[:,0,s,:])
-                    axes[s].set_ylime(0, 1)
-                    axes[s].set_title('Head 0')
-                    axes[s].legend(['M{}'.format(i) for i in range(os)])
-                continue
             for h in range(hs):
-                if ss == 1:
-                    axes[h].plot(dist[:,h,0,:])
-                    axes[h].set_ylim(0, 1)
-                    axes[h].set_title('Head {}'.format(h))
-                    axes[h].legend(['M{}'.format(i) for i in range(os)])
-                    continue
                 for s in range(ss):
+                    switch = 0
+                    count = 0
+                    for f in range(start, end):
+                        if dist[f,h,s,s] >= dist[f,h,s,1-s]:
+                            count += 1
+                        if f > start and ((dist[f,h,s,s] >= 0.5) != (dist[f-1,h,s,s] >= 0.5)):
+                            switch += 1
+                    per = count / length
+                    cat = category(per)
                     axes[h, s].plot(dist[:,h,s,:])
-                    axes[h, s].set_ylim(0, 1)
-                    axes[h, s].set_title('Head {0}, Modality {1}'.format(h, s))
-                    axes[h, s].legend(['M{}'.format(i) for i in range(os)])
+                    axes[h, s].set_xlim(start-gap, end+gap)
+                    axes[h, s].set_ylim(-0.1, 1.1)
+                    axes[h, s].tick_params(labelsize=17)
+                    axes[h, s].grid()
+                    axes[h, s].set_title('Head {0}, Modality {1}\n SelfAttenRate {2:.4f}, Category {3}, Switch# {4}'.format(h, s, per, cat, switch), fontsize=17)
+                    axes[h, s].legend(['M{}'.format(i) for i in range(os)], fontsize=17)
+            plt.tight_layout()
             plt.show()
             print('\n')
       
@@ -84,32 +83,7 @@ class Analysis(object):
             sl, hs, ss, os = dist.shape
             _, axes = plt.subplots(hs, ss, figsize=[ss*9, hs*3.5])
             x = list(range(sl))
-            if hs == 1:
-                if ss == 1:
-                    y = [dist[:,0,0,i] for i in range(os)]
-                    l = ['M{}'.format(i) for i in range(os)]
-                    axes.stackplot(x, *y, labels=l)
-                    axes.set_ylim(0, 1)
-                    axes.set_title('Head 0')
-                    axes.legend(['M{}'.format(i) for i in range(os)])
-                    continue
-                for s in range(ss):
-                    y = [dist[:,0,s,i] for i in range(os)]
-                    l = ['M{}'.format(i) for i in range(os)]
-                    axes[s].stackplot(x, *y, labels=l)
-                    axes[s].set_ylim(0, 1)
-                    axes[s].set_title('Head 0')
-                    axes[s].legend(['M{}'.format(i) for i in range(os)])
-                continue
             for h in range(hs):
-                if ss == 1:
-                    y = [dist[:,h,0,i] for i in range(os)]
-                    l = ['M{}'.format(i) for i in range(os)]
-                    axes[h].stackplot(x, *y, labels=l)
-                    axes[h].set_ylim(0, 1)
-                    axes[h].set_title('Head {0}'.format(h))
-                    axes[h].legend(['M{}'.format(i) for i in range(os)])
-                    continue
                 for s in range(ss):
                     y = [dist[:,h,s,i] for i in range(os)]
                     l = ['M{}'.format(i) for i in range(os)]
@@ -117,8 +91,64 @@ class Analysis(object):
                     axes[h, s].set_ylim(0, 1)
                     axes[h, s].set_title('Head {0}, Modality {1}'.format(h, s))
                     axes[h, s].legend(['M{}'.format(i) for i in range(os)])
+            plt.tight_layout()
             plt.show()
             print('\n')
+
+
+
+def category(percent):
+    if percent >= 1.0:
+        return 'FIA'
+    if percent <= 0.0:
+        return 'FOA'
+    if percent < 1.0 and percent >= 0.6:
+        return 'FOS'
+    if percent <= 0.4 and percent > 0.0:
+        return 'FIS'
+    if percent < 0.6 and percent > 0.4:
+        return 'FIOB'
+
+
+
+def analysis(res_dir, n_label=3):
+    output = {}
+    is_json = lambda x: x.endswith('.json')
+    for file in filter(is_json, os.listdir(res_dir)):
+        path = os.path.join(res_dir, file)
+        res = json.load(open(path, 'r'))
+        for uid, item in res.items():
+            exeid = uid.split('_')[-1]
+            if exeid not in output.keys():
+                output[exeid] = {}
+            dist = np.asarray(item['dist'], dtype=np.float32)
+            start = np.argmin(np.all(np.absolute(dist-0.5)<1e-3, axis=(1,2,3)))
+            end = len(dist)
+            length = end-start
+            _, hs, ss, _ = dist.shape
+            for h in range(hs):
+                for s in range(ss):
+                    switch = 0
+                    count = 0
+                    for f in range(start, end):
+                        if dist[f,h,s,s] >= dist[f,h,s,1-s]:
+                            count += 1
+                        if f > start and ((dist[f,h,s,s] >= 0.5) != (dist[f-1,h,s,s] >= 0.5)):
+                            switch += 1
+                    per = count / length
+                    cat = category(per)
+                    if cat not in output[exeid].keys():
+                        output[exeid][cat] = {}
+                    modal = 'MC' if s == 0 else 'EMG'
+                    if modal not in output[exeid][cat].keys():
+                        output[exeid][cat][modal] = 0
+                    output[exeid][cat][modal] += 1
+                    if 'switch' not in output[exeid].keys():
+                        output[exeid]['switch'] = {}
+                    if modal not in output[exeid]['switch'].keys():
+                        output[exeid]['switch'][modal] = []
+                    output[exeid]['switch'][modal].append(switch)
+    return output
 
 
 
@@ -174,7 +204,44 @@ def cv_result(res_dir=None, n_label=3):
 
 
 
-def ttest_losocv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
+def wilcoxon(x, y=None):
+
+    if y is None:
+        d = np.asarray(x)
+    else:
+        x, y = map(np.asarray, (x, y))
+        if len(x) != len(y):
+            raise ValueError('Unequal N in wilcoxon.  Aborting.')
+        d = x - y
+
+    d = np.compress(np.not_equal(d, 0), d, axis=-1)
+
+    count = len(d)
+    if count < 10:
+        print("Warning: sample size too small for normal approximation.")
+
+    r = stats.rankdata(abs(d))
+    r_plus = np.sum((d > 0) * r, axis=0)
+    r_minus = np.sum((d < 0) * r, axis=0)
+
+    T = min(r_plus, r_minus)
+    mn = count * (count + 1.) * 0.25
+    se = count * (count + 1.) * (2. * count + 1.)
+
+    _, repnum = stats.find_repeats(r)
+    if repnum.size != 0:
+        # Correction for repeated elements.
+        se -= 0.5 * (repnum * (repnum * repnum - 1)).sum()
+
+    se = math.sqrt(se / 24)
+    z = (T - mn) / se
+    p = 2. * stats.norm.sf(abs(z))
+
+    return T, z, p
+
+
+
+def wtest_losocv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
     is_json = lambda x: x.endswith('.json')
     files1 = list(filter(is_json, os.listdir(res1_dir)))
     files2 = list(filter(is_json, os.listdir(res2_dir)))
@@ -193,18 +260,12 @@ def ttest_losocv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
         scores1.append(metric(lab1, pred1))
         scores2.append(metric(lab2, pred2))
 
-    diff = np.array(scores1) - np.array(scores2)
-    _, p_norm = stats.shapiro(diff)
-    if p_norm < 0.05:
-        t, p = stats.wilcoxon(scores1, scores2)
-        print('Wilcoxon signed-rank test, statistic={0}, p-value={1}'.format(t, p))
-    else:
-        t, p = stats.ttest_rel(scores1, scores2)
-        print('Paired t-test, statistic={0}, p-value={1}'.format(t, p))
+    w, z, p = wilcoxon(scores1, scores2)
+    print('Wilcoxon signed-rank test, statistic={0}, z={1}, p-value={2}'.format(w, z, p))
 
 
 
-def ftest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
+def wtest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
     is_json = lambda x: x.endswith('.json')
     files1 = list(filter(is_json, os.listdir(res1_dir)))
     files2 = list(filter(is_json, os.listdir(res2_dir)))
@@ -230,43 +291,6 @@ def ftest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
         assert nf1 == nf2
         diff[int(nt1), int(nf1)] = score1 - score2
 
-    p_i_bar = np.mean(diff, axis=1, keepdims=True)
-    s_i_sqr = np.sum(np.square(diff - p_i_bar), axis=1)
-    f = np.sum(np.square(diff)) / (2*np.sum(s_i_sqr))
-    p = stats.f.sf(f, 10, 5)
-    print('F test, statistic={0}, p-value={1}'.format(f, p))
-
-
-
-def ttest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
-    is_json = lambda x: x.endswith('.json')
-    files1 = list(filter(is_json, os.listdir(res1_dir)))
-    files2 = list(filter(is_json, os.listdir(res2_dir)))
-    assert len(files1) == len(files2)
-
-    diff = np.zeros((5, 2))
-    for f1, f2 in zip(sorted(files1), sorted(files2)):
-        path1 = os.path.join(res1_dir, f1)
-        path2 = os.path.join(res2_dir, f2)
-        res1 = json.load(open(path1, 'r'))
-        res2 = json.load(open(path2, 'r'))
-        lab1 = [it['label'] for it in res1.values()]
-        lab2 = [it['label'] for it in res2.values()]
-        pred1 = [it['pred'] for it in res1.values()]
-        pred2 = [it['pred'] for it in res2.values()]
-        score1 = metric(lab1, pred1)
-        score2 = metric(lab2, pred2)
-        name1 = f1.replace('.json', '')
-        name2 = f2.replace('.json', '')
-        _, nt1, nf1 = name1.split('_')
-        _, nt2, nf2 = name2.split('_')
-        assert nt1 == nt2
-        assert nf1 == nf2
-        diff[int(nt1), int(nf1)] = score1 - score2
-
-    p_i_bar = np.mean(diff, axis=1, keepdims=True)
-    s_i_sqr = np.sum(np.square(diff - p_i_bar), axis=1)
-    t = diff[0, 0] / np.sqrt(np.mean(s_i_sqr))
-    p = stats.t.sf(t, 5)*2
-    print('T-test, statistic={0}, p-value={1}'.format(t, p))
-    
+    diff = diff.flatten()
+    w, z, p = wilcoxon(diff)
+    print('Wilcoxon signed-rank test, statistic={0}, z={1}, p-value={2}'.format(w, z, p))
