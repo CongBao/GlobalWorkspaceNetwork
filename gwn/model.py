@@ -49,6 +49,18 @@ class GWNConfig(object):
 
 
 class MappingPretrain(object):
+    """
+    Pretrain the mapping component.
+
+    Arguments:
+    + inputs: list, a list of input tensors for different modalities
+    + config: object, an instance of `GWNConfig`
+    + is_training: bool, whether is training or not
+
+    Properties:
+    + mapped_inputs: tensor (B, M, S, H), tensor after mapping
+    + loss: tensor (), loss of the pretrain model
+    """
 
     def __init__(self, inputs, config, is_training):
 

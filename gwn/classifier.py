@@ -17,7 +17,7 @@ import emoji
 import numpy as np
 import tensorflow as tf
 
-import model
+import gwn.model as model
 
 
 
