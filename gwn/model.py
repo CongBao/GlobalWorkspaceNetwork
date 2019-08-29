@@ -15,9 +15,9 @@ import tensorflow as tf
 
 
 
-class GWTConfig(object):
+class GWNConfig(object):
     """
-    Configuration for GWT model.
+    Configuration for GWN model.
 
     Properties:
     + gws_size: int, size of global workspace (rnn cell)
@@ -56,7 +56,7 @@ class MappingPretrain(object):
         if not is_training:
             config.drop_rate = 0.0
 
-        with tf.variable_scope('gwt_model'):
+        with tf.variable_scope('gwn_model'):
             with tf.variable_scope('mapping'):
                 self.mapped_inputs = mapping(
                     input_list=inputs,
@@ -102,13 +102,13 @@ class MappingPretrain(object):
 
 
 
-class GWTModel(object):
+class GWNModel(object):
     """
-    Structure of GWT model.
+    Structure of GWN model.
 
     Arguments:
     + inputs: list, a list of input tensors for different modalities
-    + config: object, an instance of `GWTConfig`
+    + config: object, an instance of `GWNConfig`
     + is_training: bool, whether is training or not
 
     Properties:
@@ -124,7 +124,7 @@ class GWTModel(object):
         if not is_training:
             config.drop_rate = 0.0
 
-        with tf.variable_scope('gwt_model'):
+        with tf.variable_scope('gwn_model'):
             with tf.variable_scope('mapping'): # input -> dense (sequence)
                 self.mapped_inputs = mapping(
                     input_list=inputs,
@@ -169,7 +169,7 @@ class ConcModel(object):
 
     Arguments:
     + inputs: list, a list of input tensors for different modalities
-    + config: object, an instance of `GWTConfig`
+    + config: object, an instance of `GWNConfig`
     + is_training: bool, whether is training or not
 
     Properties:
@@ -189,69 +189,6 @@ class ConcModel(object):
                 inputs=tf.concat(inputs, axis=-1), # M, (B, S, F) -> (B, S, F*)
                 dtype=tf.float32
             ) # (B, S, F*) -> (B, S, G)
-            with tf.variable_scope('projection'):
-                self.proj_output = projection(
-                    features=self.outputs[:,-1,:],
-                    units=config.proj_size,
-                    activ=get_activ_fn(config.proj_activ),
-                    dropout=config.drop_rate
-                ) # (B, G) -> (B, P)
-
-    def get_projection(self):
-        return self.proj_output
-
-    def get_gws_sequence(self):
-        return self.outputs
-
-
-
-class AttenRmModel(object):
-    """
-    A baseline cancatenation model without attention.
-    
-    Arguments:
-    + inputs: list, a list of input tensors for different modalities
-    + config: object, an instance of `GWTConfig`
-    + is_training: bool, whether is training or not
-
-    Properties:
-    + mapped_inputs: tensor (B, M, S, H), tensor after mapping
-    + outputs: tensor (B, S, G), tensor outputed by rnn
-    + proj_output: tensor (B, P), tensor after projection
-    """
-
-    def __init__(self, inputs, config, is_training):
-
-        config = copy.deepcopy(config)
-        if not is_training:
-            config.drop_rate = 0.0
-
-        with tf.variable_scope('atten_rm_model'):
-            with tf.variable_scope('mapping'): # input -> dense (sequence)
-                self.mapped_inputs = mapping(
-                    input_list=inputs,
-                    units=config.hidden_size,
-                    activ=get_activ_fn(config.map_activ),
-                    dropout=config.drop_rate
-                ) # M, (B, S, F) -> (B, M, S, H)
-            input_list = tf.unstack(self.mapped_inputs, axis=1) # (B, M, S, H) -> M, (B, S, H)
-            mapped = tf.concat(input_list, axis=-1) # M, (B, S, H) -> (B, S, M*H)
-            with tf.variable_scope('intermediate'):
-                inter = tf.keras.layers.TimeDistributed(
-                    tf.keras.layers.Dense(
-                        units=config.inter_size,
-                        activation=get_activ_fn(config.inter_activ)
-                    ),
-                )(mapped) # (B, S, M*H) -> (B, S, I)
-                inter = tf.keras.layers.TimeDistributed(
-                    tf.keras.layers.Dense(len(inputs)*config.hidden_size)
-                )(inter) # (B, S, I) -> (B, S, M*H)
-                mapped = tf.contrib.layers.layer_norm(inter + mapped, begin_norm_axis=-1)
-            self.outputs, _ = tf.nn.dynamic_rnn(
-                cell=tf.nn.rnn_cell.LSTMCell(config.gws_size),
-                inputs=mapped,
-                dtype=tf.float32
-            ) # (B, S, M*H) -> (B, S, G)
             with tf.variable_scope('projection'):
                 self.proj_output = projection(
                     features=self.outputs[:,-1,:],

@@ -446,7 +446,7 @@ def create_model(inputs, labels, config, is_training, n_label):
     Arguments:
     + inputs: list, a list of input tensors for different modalities
     + labels: list, corresponding labels of inputs
-    + config: object, instance of `GWTConfig`
+    + config: object, instance of `GWNConfig`
     + is_training: bool, whether is training or not
     + n_label: int, number of labels
 
@@ -457,14 +457,14 @@ def create_model(inputs, labels, config, is_training, n_label):
     + tensor (S, B, N, [1, M], M), attention distributions
     """
     
-    gwt_model = model.GWTModel(
+    gwn_model = model.GWNModel(
         inputs=inputs,
         config=config,
         is_training=is_training
     )
 
-    output = gwt_model.get_projection() # (B, P)
-    dists = gwt_model.get_dist_sequence() # (S, B, N, [1, M], M)
+    output = gwn_model.get_projection() # (B, P)
+    dists = gwn_model.get_dist_sequence() # (S, B, N, [1, M], M)
 
     with tf.variable_scope('loss'):
         if is_training:
@@ -525,7 +525,7 @@ def model_fn_builder(config, n_label, lr, n_train_step, n_warmup_step):
     Build model function for estimator.
 
     Arguments:
-    + config: object, instance of `GWTConfig`
+    + config: object, instance of `GWNConfig`
     + n_label: int, number of labels
     + lr: float, learning rate
     + n_trainig_step: number of training steps
@@ -654,7 +654,7 @@ def main(FLAG):
         )
 
     model_fn = model_fn_builder(
-        config=model.GWTConfig(),
+        config=model.GWNConfig(),
         n_label=epp.get_n_label(),
         lr=FLAG.learning_rate,
         n_train_step=n_train_step,
@@ -671,8 +671,8 @@ def main(FLAG):
 
     warm_config = tf.estimator.WarmStartSettings(
         ckpt_to_initialize_from=FLAG.ckpt_path,
-        vars_to_warm_start='gwt_model/*'
-    ) if FLAG.ckpt_path else None
+        vars_to_warm_start='gwn_model/*'
+    ) if FLAG.ckpt_path and FLAG.do_train else None
 
     estimator = tf.estimator.Estimator(
         model_fn=model_fn,
