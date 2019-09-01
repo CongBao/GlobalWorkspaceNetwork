@@ -38,9 +38,9 @@ class GWNConfig(object):
         self.proj_size = 64
         self.inter_size = 128
         self.hidden_size = 32
-        self.n_head = 2
+        self.n_head = 4
         self.self_atten = True
-        self.atten_type = 'general'
+        self.atten_type = 'scaled_dot_product'
         self.map_activ = 'gelu'
         self.proj_activ = 'tanh'
         self.inter_activ = 'gelu'
@@ -236,7 +236,7 @@ class ConcModel(object):
 
 def mapping(input_list, units, activ, dropout):
     """
-    Map input tensors to same dimension.
+    Map input tensors to a common feature space.
 
     Arguments:
     + input_list: list, a list of input tensors for different modalities

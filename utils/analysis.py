@@ -234,10 +234,11 @@ def wilcoxon(x, y=None):
         se -= 0.5 * (repnum * (repnum * repnum - 1)).sum()
 
     se = math.sqrt(se / 24)
-    z = (T - mn) / se
-    p = 2. * stats.norm.sf(abs(z))
+    Z = (T - mn) / se
+    R = abs(Z) / math.sqrt(len(x))
+    p = 2. * stats.norm.sf(abs(Z))
 
-    return T, z, p
+    return T, Z, R, p
 
 
 
@@ -260,8 +261,8 @@ def wtest_losocv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
         scores1.append(metric(lab1, pred1))
         scores2.append(metric(lab2, pred2))
 
-    w, z, p = wilcoxon(scores1, scores2)
-    print('Wilcoxon signed-rank test, statistic={0}, z={1}, p-value={2}'.format(w, z, p))
+    w, z, r, p = wilcoxon(scores1, scores2)
+    print('Wilcoxon signed-rank test, statistic={0}, z={1}, r={2} p-value={3}'.format(w, z, r, p))
 
 
 
@@ -292,5 +293,5 @@ def wtest_52cv(res1_dir=None, res2_dir=None, metric=metrics.accuracy_score):
         diff[int(nt1), int(nf1)] = score1 - score2
 
     diff = diff.flatten()
-    w, z, p = wilcoxon(diff)
-    print('Wilcoxon signed-rank test, statistic={0}, z={1}, p-value={2}'.format(w, z, p))
+    w, z, r, p = wilcoxon(diff)
+    print('Wilcoxon signed-rank test, statistic={0}, z={1}, r={2} p-value={3}'.format(w, z, r, p))

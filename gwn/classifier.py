@@ -9,7 +9,6 @@ import gc
 import os
 import re
 import json
-import cmath
 import random
 import collections
 
@@ -29,6 +28,7 @@ class Flag(object):
     + data_path: str, path of data file
     + ckpt_path: str, path of checkpoint file
     + output_dir: str, directory of output files
+    + model_name: str, name of model
     + do_train: bool, whether to do train or not
     + do_valid: bool, whether to do validation or not
     + do_test: bool, whether to do test or not
@@ -55,6 +55,7 @@ class Flag(object):
         self.data_path = None
         self.ckpt_path = None
         self.output_dir = 'output/'
+        self.model_name = 'gwn'
         self.do_train = True
         self.do_valid = True
         self.do_test = True
@@ -439,7 +440,7 @@ def tf_record_input_fn_builder(record_path, pose_feat_size, emg_feat_size, batch
 
 
 
-def create_model(inputs, labels, config, is_training, n_label):
+def create_model(inputs, labels, config, is_training, n_label, model_name):
     """
     Create downstream task model.
 
@@ -449,6 +450,7 @@ def create_model(inputs, labels, config, is_training, n_label):
     + config: object, instance of `GWNConfig`
     + is_training: bool, whether is training or not
     + n_label: int, number of labels
+    + model_name: str, name of model
 
     Return:
     + tensor (), loss of model
@@ -456,15 +458,36 @@ def create_model(inputs, labels, config, is_training, n_label):
     + tensor (B, L), log probability
     + tensor (S, B, N, [1, M], M), attention distributions
     """
-    
-    gwn_model = model.GWNModel(
-        inputs=inputs,
-        config=config,
-        is_training=is_training
-    )
 
-    output = gwn_model.get_projection() # (B, P)
-    dists = gwn_model.get_dist_sequence() # (S, B, N, [1, M], M)
+    model_names = ['pretrain', 'conc', 'gwn']
+    if model_name not in model_names:
+        raise ValueError('Unknown model name %s. Accepted models are: %s.'.format(model_name, model_names))
+    
+    if model_name == 'pretrain':
+        md = model.MappingPretrain(
+            inputs=inputs,
+            config=config,
+            is_training=is_training
+        )
+        return md.get_loss(), None, None, None
+
+    if model_name == 'conc':
+        md = model.ConcModel(
+            inputs=inputs,
+            config=config,
+            is_training=is_training
+        )
+        dists = tf.zeros_like(labels) # (B, L)
+
+    if model_name == 'gwn':
+        md = model.GWNModel(
+            inputs=inputs,
+            config=config,
+            is_training=is_training
+        )
+        dists = md.get_dist_sequence() # (S, B, N, [1, M], M)
+
+    output = md.get_projection() # (B, P)
 
     with tf.variable_scope('loss'):
         if is_training:
@@ -520,13 +543,14 @@ def create_optimizer(loss, init_lr, n_train_step, n_warmup_step):
 
 
 
-def model_fn_builder(config, n_label, lr, n_train_step, n_warmup_step):
+def model_fn_builder(config, n_label, model_name, lr, n_train_step, n_warmup_step):
     """
     Build model function for estimator.
 
     Arguments:
     + config: object, instance of `GWNConfig`
     + n_label: int, number of labels
+    + model_name: str, name of model
     + lr: float, learning rate
     + n_trainig_step: number of training steps
     + n_warmup_step: number of warmup steps
@@ -547,7 +571,8 @@ def model_fn_builder(config, n_label, lr, n_train_step, n_warmup_step):
             labels=label,
             config=config,
             is_training=is_training,
-            n_label=n_label
+            n_label=n_label,
+            model_name=model_name
         )
 
         output_spec = None
@@ -656,6 +681,7 @@ def main(FLAG):
     model_fn = model_fn_builder(
         config=model.GWNConfig(),
         n_label=epp.get_n_label(),
+        model_name=FLAG.model_name,
         lr=FLAG.learning_rate,
         n_train_step=n_train_step,
         n_warmup_step=FLAG.n_warmup_step
@@ -671,7 +697,7 @@ def main(FLAG):
 
     warm_config = tf.estimator.WarmStartSettings(
         ckpt_to_initialize_from=FLAG.ckpt_path,
-        vars_to_warm_start='gwn_model/*'
+        vars_to_warm_start='{}_model/mapping/*'.format(FLAG.model_name)
     ) if FLAG.ckpt_path and FLAG.do_train else None
 
     estimator = tf.estimator.Estimator(
